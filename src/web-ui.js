@@ -29,6 +29,27 @@ function checkWsRateLimit(socketId) {
   return entry.count <= WS_RATE_LIMIT_MAX
 }
 
+const CHUNK_RATE_LIMIT_WINDOW = 60 * 1000
+const CHUNK_RATE_LIMIT_MAX = 5000
+const chunkRateLimits = new Map()
+
+function checkChunkRateLimit(socketId) {
+  const now = Date.now()
+  let entry = chunkRateLimits.get(socketId)
+  if (!entry) {
+    entry = { count: 1, resetAt: now + CHUNK_RATE_LIMIT_WINDOW }
+    chunkRateLimits.set(socketId, entry)
+    return true
+  }
+  if (now > entry.resetAt) {
+    entry.count = 1
+    entry.resetAt = now + CHUNK_RATE_LIMIT_WINDOW
+    return true
+  }
+  entry.count++
+  return entry.count <= CHUNK_RATE_LIMIT_MAX
+}
+
 function isValidBase64(str) {
   if (typeof str !== 'string') return false
   return /^[A-Za-z0-9+/]*={0,2}$/.test(str) && (str.length % 4 === 0)
@@ -150,7 +171,10 @@ function createWebUI(peerInfo) {
     })
 
     socket.on('file-chunk-upload', (data) => {
-      if (!checkWsRateLimit(socket.id)) return
+      if (!checkChunkRateLimit(socket.id)) {
+        socket.emit('chunk-error', { transferId: data?.transferId, index: data?.index, error: 'Rate limit exceeded' })
+        return
+      }
       if (!data || typeof data.transferId !== 'string' || !data.transferId) return
       if (typeof data.index !== 'number' || data.index < 0) return
       if (!data.data) return
@@ -168,13 +192,17 @@ function createWebUI(peerInfo) {
 
       if (!isValidBase64(b64)) return
 
-      peerInfo.onFileChunkUpload({
+      const ok = peerInfo.onFileChunkUpload({
         transferId: data.transferId,
         index: data.index,
         data: b64,
       })
 
-      socket.emit('chunk-ack', { transferId: data.transferId })
+      if (ok) {
+        socket.emit('chunk-ack', { transferId: data.transferId, index: data.index })
+      } else {
+        socket.emit('chunk-error', { transferId: data.transferId, index: data.index, error: 'Peer not connected' })
+      }
     })
 
     socket.on('file-transfer-end', (data) => {

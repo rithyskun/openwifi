@@ -75,18 +75,20 @@ class FileTransferManager extends EventEmitter {
   }
 
   sendChunk(transferId, index, data) {
-    if (!isValidTransferId(transferId)) return
+    if (!isValidTransferId(transferId)) return false
     const send = this.sends.get(transferId)
-    if (!send) return
+    if (!send) return false
 
-    this.peerManager.sendToPeer(send.toPeerId, {
+    const ok = this.peerManager.sendToPeer(send.toPeerId, {
       type: 'file-transfer',
       payload: { action: 'chunk', transferId, index, data },
     })
+    if (!ok) return false
 
     this._updateSendHash(send, index, data)
 
     this.emit('send-progress', { transferId, index, total: send.totalChunks })
+    return true
   }
 
   _updateSendHash(send, index, data) {

@@ -134,7 +134,7 @@ const webUI = createWebUI({
     fileTransfer.startTransfer(transferId, fileName, fileSize, to)
   },
   onFileChunkUpload: ({ transferId, index, data }) => {
-    fileTransfer.sendChunk(transferId, index, data)
+    return fileTransfer.sendChunk(transferId, index, data)
   },
   onFileTransferEnd: ({ transferId }) => {
     fileTransfer.endTransfer(transferId)

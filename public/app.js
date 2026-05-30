@@ -198,12 +198,53 @@ function updateSendProgress(event) {
   if (text) text.textContent = pct + '%'
 }
 
-const chunkAcks = {}
+const pendingChunks = new Map()
+const sendQueues = new Map()
+const CHUNK_TIMEOUT_MS = 15000
+const MAX_CHUNK_RETRIES = 3
 
-socket.on('chunk-ack', ({ transferId }) => {
-  const cb = chunkAcks[transferId]
-  if (cb) cb()
+socket.on('chunk-ack', ({ transferId, index }) => {
+  const pending = pendingChunks.get(transferId)
+  if (!pending) return
+  const chunk = pending.get(index)
+  if (chunk) {
+    clearTimeout(chunk.timer)
+    pending.delete(index)
+    sendNextBatch(transferId)
+  }
 })
+
+socket.on('chunk-error', ({ transferId, index, error }) => {
+  const pending = pendingChunks.get(transferId)
+  if (!pending) return
+  const chunk = pending.get(index)
+  if (!chunk) return
+  clearTimeout(chunk.timer)
+  if (chunk.retries < MAX_CHUNK_RETRIES) {
+    chunk.retries++
+    pending.delete(index)
+    sendChunkToServer(transferId, index)
+    const newPending = pendingChunks.get(transferId)
+    if (newPending) {
+      const newChunk = newPending.get(index)
+      if (newChunk) newChunk.retries = chunk.retries
+    }
+  } else {
+    abortSend(transferId, `Chunk ${index} failed: ${error || 'max retries'}`)
+  }
+})
+
+function abortSend(transferId, reason) {
+  const pending = pendingChunks.get(transferId)
+  if (pending) {
+    for (const [, chunk] of pending) clearTimeout(chunk.timer)
+    pendingChunks.delete(transferId)
+  }
+  sendQueues.delete(transferId)
+  activeSends.delete(transferId)
+  socket.emit('file-transfer-cancel', { transferId })
+  addSystemMessage(`Send failed: ${reason}`)
+}
 
 function startSendingChunks(transferId) {
   const send = activeSends.get(transferId)
@@ -211,42 +252,68 @@ function startSendingChunks(transferId) {
 
   const { file, chunkSize } = send
   const totalChunks = Math.ceil(file.size / chunkSize)
-  let nextIndex = 0
-  let inFlight = 0
-  let done = false
+  sendQueues.set(transferId, { file, chunkSize, totalChunks, nextIndex: 0 })
+  pendingChunks.set(transferId, new Map())
 
-  function sendNextBatch() {
-    if (done) return
-    while (inFlight < PIPELINE_DEPTH && nextIndex < totalChunks) {
-      const index = nextIndex++
-      inFlight++
-      const start = index * chunkSize
-      const end = Math.min(start + chunkSize, file.size)
-      const blob = file.slice(start, end)
-      const reader = new FileReader()
+  sendNextBatch(transferId)
+}
 
-      reader.onload = (e) => {
-        socket.emit('file-chunk-upload', {
-          transferId, index, data: e.target.result,
-        })
+function sendNextBatch(transferId) {
+  const queue = sendQueues.get(transferId)
+  const pending = pendingChunks.get(transferId)
+  if (!queue || !pending) return
+
+  while (pending.size < PIPELINE_DEPTH && queue.nextIndex < queue.totalChunks) {
+    const index = queue.nextIndex++
+    sendChunkToServer(transferId, index)
+  }
+
+  if (queue.nextIndex >= queue.totalChunks && pending.size === 0) {
+    pendingChunks.delete(transferId)
+    sendQueues.delete(transferId)
+    socket.emit('file-transfer-end', { transferId })
+  }
+}
+
+function sendChunkToServer(transferId, index) {
+  const queue = sendQueues.get(transferId)
+  const pending = pendingChunks.get(transferId)
+  if (!queue || !pending) return
+
+  const { file, chunkSize } = queue
+  const start = index * chunkSize
+  const end = Math.min(start + chunkSize, file.size)
+  const blob = file.slice(start, end)
+  const reader = new FileReader()
+
+  reader.onload = (e) => {
+    socket.emit('file-chunk-upload', {
+      transferId, index, data: e.target.result,
+    })
+  }
+
+  reader.readAsArrayBuffer(blob)
+
+  const timer = setTimeout(() => {
+    const p = pendingChunks.get(transferId)
+    if (!p) return
+    const chunk = p.get(index)
+    if (!chunk) return
+    if (chunk.retries < MAX_CHUNK_RETRIES) {
+      chunk.retries++
+      p.delete(index)
+      sendChunkToServer(transferId, index)
+      const newPending = pendingChunks.get(transferId)
+      if (newPending) {
+        const newChunk = newPending.get(index)
+        if (newChunk) newChunk.retries = chunk.retries
       }
-
-      reader.readAsArrayBuffer(blob)
+    } else {
+      abortSend(transferId, `Chunk ${index} timed out after ${MAX_CHUNK_RETRIES} retries`)
     }
+  }, CHUNK_TIMEOUT_MS)
 
-    if (nextIndex >= totalChunks && inFlight === 0) {
-      done = true
-      delete chunkAcks[transferId]
-      socket.emit('file-transfer-end', { transferId })
-    }
-  }
-
-  chunkAcks[transferId] = () => {
-    inFlight--
-    sendNextBatch()
-  }
-
-  sendNextBatch()
+  pending.set(index, { retries: 0, timer })
 }
 
 function handleAuthEvent(event) {
