@@ -1,21 +1,19 @@
 const net = require('net')
-const { encrypt, decrypt, deriveSharedSecret } = require('./crypto')
+const { encryptBuffer, decryptBuffer, deriveSharedSecret } = require('./crypto')
 const { KEEPALIVE_INTERVAL } = require('./config')
 
 const MAX_MESSAGE_SIZE = 16 * 1024 * 1024
-const MAX_BUFFER_SIZE = MAX_MESSAGE_SIZE + 4
+const MAX_BUFFER_SIZE = MAX_MESSAGE_SIZE + 5
+
+const FRAME_JSON = 0x00
+const FRAME_ENCRYPTED = 0x01
+const IV_LENGTH = 16
+const TAG_LENGTH = 16
 
 function createPeerManager(peerInfo) {
   const peers = new Map()
   const pendingConnections = new Set()
   let server = null
-
-  function encodeMessage(msg) {
-    const data = Buffer.from(JSON.stringify(msg), 'utf-8')
-    const header = Buffer.alloc(4)
-    header.writeUInt32BE(data.length, 0)
-    return Buffer.concat([header, data])
-  }
 
   function parseMessage(buffer) {
     try {
@@ -25,28 +23,38 @@ function createPeerManager(peerInfo) {
     }
   }
 
-  function sendRaw(socket, msg) {
+  function sendRaw(socket, buffer) {
     if (socket && !socket.destroyed) {
-      socket.write(encodeMessage(msg))
+      socket.write(buffer)
     }
   }
 
-  function encryptOutgoing(rawMsg, sharedKey) {
-    const plaintext = JSON.stringify(rawMsg)
-    const encrypted = encrypt(plaintext, sharedKey)
-    return {
-      type: '_encrypted_',
-      iv: encrypted.iv,
-      tag: encrypted.tag,
-      ciphertext: encrypted.ciphertext,
-    }
+  function encodePlaintext(msg) {
+    const data = Buffer.from(JSON.stringify(msg), 'utf-8')
+    const header = Buffer.alloc(5)
+    header.writeUInt32BE(1 + data.length, 0)
+    header[4] = FRAME_JSON
+    return Buffer.concat([header, data])
   }
 
-  function decryptIncoming(wireMsg, sharedKey) {
-    if (wireMsg.type !== '_encrypted_') return null
+  function buildEncryptedFrame(rawMsg, sharedKey) {
+    const plaintext = Buffer.from(JSON.stringify(rawMsg), 'utf-8')
+    const encrypted = encryptBuffer(plaintext, sharedKey)
+    const payload = Buffer.concat([encrypted.iv, encrypted.tag, encrypted.ciphertext])
+    const header = Buffer.alloc(5)
+    header.writeUInt32BE(1 + payload.length, 0)
+    header[4] = FRAME_ENCRYPTED
+    return Buffer.concat([header, payload])
+  }
+
+  function decryptIncoming(framePayload, sharedKey) {
+    if (framePayload.length < IV_LENGTH + TAG_LENGTH) return null
     try {
-      const plaintext = decrypt(wireMsg, sharedKey)
-      return parseMessage(Buffer.from(plaintext, 'utf-8'))
+      const iv = framePayload.slice(0, IV_LENGTH)
+      const tag = framePayload.slice(IV_LENGTH, IV_LENGTH + TAG_LENGTH)
+      const ciphertext = framePayload.slice(IV_LENGTH + TAG_LENGTH)
+      const plaintext = decryptBuffer(iv, tag, ciphertext, sharedKey)
+      return parseMessage(plaintext)
     } catch {
       return null
     }
@@ -58,9 +66,9 @@ function createPeerManager(peerInfo) {
     if (!opts.skipAuth && !peer.authenticated) return false
 
     if (peer.sharedKey && peer.handshakeDone) {
-      sendRaw(peer.socket, encryptOutgoing(message, peer.sharedKey))
+      sendRaw(peer.socket, buildEncryptedFrame(message, peer.sharedKey))
     } else {
-      sendRaw(peer.socket, message)
+      sendRaw(peer.socket, encodePlaintext(message))
     }
     return true
   }
@@ -72,9 +80,9 @@ function createPeerManager(peerInfo) {
       if (!opts.skipAuth && !peer.authenticated) continue
 
       if (peer.sharedKey && peer.handshakeDone) {
-        sendRaw(peer.socket, encryptOutgoing(message, peer.sharedKey))
+        sendRaw(peer.socket, buildEncryptedFrame(message, peer.sharedKey))
       } else {
-        sendRaw(peer.socket, message)
+        sendRaw(peer.socket, encodePlaintext(message))
       }
     }
   }
@@ -92,7 +100,6 @@ function createPeerManager(peerInfo) {
   function attachSocketHandlers(socket, isOutgoing) {
     socket.setKeepAlive(true, KEEPALIVE_INTERVAL)
     let buffer = Buffer.alloc(0)
-    let messageLength = null
     let handshakeDone = false
     let remotePeerId = null
     let remoteName = null
@@ -101,80 +108,78 @@ function createPeerManager(peerInfo) {
 
     function processBuffer() {
       while (true) {
-        if (messageLength === null) {
-          if (buffer.length < 4) break
-          const declaredLen = buffer.readUInt32BE(0)
-          if (declaredLen > MAX_MESSAGE_SIZE) {
-            socket.destroy()
-            return
-          }
-          messageLength = declaredLen
-          buffer = buffer.slice(4)
+        if (buffer.length < 4) break
+        const declaredLen = buffer.readUInt32BE(0)
+        if (declaredLen > MAX_MESSAGE_SIZE) {
+          socket.destroy()
+          return
         }
-        if (buffer.length < messageLength) break
-        const msgData = buffer.slice(0, messageLength)
-        buffer = buffer.slice(messageLength)
-        messageLength = null
+        if (buffer.length < 4 + declaredLen) break
+        const frameData = buffer.slice(4, 4 + declaredLen)
+        buffer = buffer.slice(4 + declaredLen)
 
-        const wireMsg = parseMessage(msgData)
-        if (!wireMsg) continue
+        if (frameData.length < 1) continue
+        const frameType = frameData[0]
+        const payload = frameData.slice(1)
 
-        if (wireMsg.type === 'handshake') {
-          if (!wireMsg.from || !/^[a-f0-9]{8}$/i.test(wireMsg.from)) {
-            socket.destroy()
-            return
-          }
-          remotePeerId = wireMsg.from
-          remoteName = wireMsg.fromName || remotePeerId
-          remotePublicKey = wireMsg.publicKey || null
+        if (frameType === FRAME_JSON) {
+          const wireMsg = parseMessage(payload)
+          if (!wireMsg) continue
 
-          if (peerInfo.privateKey && remotePublicKey) {
-            sharedKey = deriveSharedSecret(peerInfo.privateKey, remotePublicKey)
-          }
+          if (wireMsg.type === 'handshake') {
+            if (!wireMsg.from || !/^[a-f0-9]{8}$/i.test(wireMsg.from)) {
+              socket.destroy()
+              return
+            }
+            remotePeerId = wireMsg.from
+            remoteName = wireMsg.fromName || remotePeerId
+            remotePublicKey = wireMsg.publicKey || null
 
-          const existing = peers.get(remotePeerId)
-          if (existing) {
-            socket.destroy()
-            return
-          }
+            if (peerInfo.privateKey && remotePublicKey) {
+              sharedKey = deriveSharedSecret(peerInfo.privateKey, remotePublicKey)
+            }
 
-          peers.set(remotePeerId, {
-            id: remotePeerId,
-            name: remoteName,
-            socket,
-            sharedKey,
-            remotePublicKey,
-            handshakeDone: true,
-            authenticated: false,
-          })
+            const existing = peers.get(remotePeerId)
+            if (existing) {
+              socket.destroy()
+              return
+            }
 
-          handshakeDone = true
-
-          if (!isOutgoing) {
-            sendRaw(socket, {
-              type: 'handshake',
-              from: peerInfo.id,
-              fromName: peerInfo.name,
-              publicKey: peerInfo.publicKey || '',
+            peers.set(remotePeerId, {
+              id: remotePeerId,
+              name: remoteName,
+              socket,
+              sharedKey,
+              remotePublicKey,
+              handshakeDone: true,
+              authenticated: false,
             })
+
+            handshakeDone = true
+
+            if (!isOutgoing) {
+              sendRaw(socket, encodePlaintext({
+                type: 'handshake',
+                from: peerInfo.id,
+                fromName: peerInfo.name,
+                publicKey: peerInfo.publicKey || '',
+              }))
+            }
+
+            if (sharedKey) {
+              peerInfo.onHandshakeComplete(remotePeerId, remoteName, remotePublicKey, sharedKey)
+            }
+            continue
           }
 
-          if (sharedKey) {
-            peerInfo.onHandshakeComplete(remotePeerId, remoteName, remotePublicKey, sharedKey)
-          }
-          continue
-        }
-
-        if (!handshakeDone) continue
-
-        let finalMsg = wireMsg
-        if (sharedKey) {
-          const decrypted = decryptIncoming(wireMsg, sharedKey)
+          if (!handshakeDone) continue
+          peerInfo.onMessageReceived(wireMsg, remotePeerId)
+        } else if (frameType === FRAME_ENCRYPTED) {
+          if (!handshakeDone || !sharedKey) continue
+          const decrypted = decryptIncoming(payload, sharedKey)
           if (!decrypted) continue
-          finalMsg = decrypted
+          peerInfo.onMessageReceived(decrypted, remotePeerId)
         }
-
-        peerInfo.onMessageReceived(finalMsg, remotePeerId)
       }
     }
 
@@ -197,12 +202,12 @@ function createPeerManager(peerInfo) {
     socket.on('error', () => {})
 
     if (isOutgoing) {
-      sendRaw(socket, {
+      sendRaw(socket, encodePlaintext({
         type: 'handshake',
         from: peerInfo.id,
         fromName: peerInfo.name,
         publicKey: peerInfo.publicKey || '',
-      })
+      }))
     }
 
     return socket

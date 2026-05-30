@@ -5,6 +5,8 @@ const {
   deriveSharedSecret,
   encrypt,
   decrypt,
+  encryptBuffer,
+  decryptBuffer,
   generatePIN,
 } = require('../src/crypto')
 
@@ -242,6 +244,69 @@ describe('Bidirectional encryption', () => {
     const msg = 'bidirectional test'
     const encrypted = encrypt(msg, aliceToBob)
     assert.equal(decrypt(encrypted, bobToAlice), msg)
+  })
+})
+
+describe('encryptBuffer / decryptBuffer', () => {
+  const alice = generateKeypair()
+  const bob = generateKeypair()
+  const sharedKey = deriveSharedSecret(alice.privateKey, bob.publicKey)
+
+  it('encryptBuffer returns raw Buffer iv, tag, and ciphertext', () => {
+    const result = encryptBuffer(Buffer.from('hello binary'), sharedKey)
+    assert(Buffer.isBuffer(result.iv))
+    assert(Buffer.isBuffer(result.tag))
+    assert(Buffer.isBuffer(result.ciphertext))
+    assert.equal(result.iv.length, 16)
+    assert.equal(result.tag.length, 16)
+    assert(result.ciphertext.length > 0)
+  })
+
+  it('encryptBuffer then decryptBuffer returns original plaintext Buffer', () => {
+    const plaintext = Buffer.from('Hello, Binary OpenWiFi!')
+    const encrypted = encryptBuffer(plaintext, sharedKey)
+    const decrypted = decryptBuffer(encrypted.iv, encrypted.tag, encrypted.ciphertext, sharedKey)
+    assert.equal(decrypted.toString('utf-8'), plaintext.toString('utf-8'))
+  })
+
+  it('handles large binary payload', () => {
+    const plaintext = Buffer.from('A'.repeat(500000))
+    const encrypted = encryptBuffer(plaintext, sharedKey)
+    const decrypted = decryptBuffer(encrypted.iv, encrypted.tag, encrypted.ciphertext, sharedKey)
+    assert.equal(decrypted.length, plaintext.length)
+    assert.equal(decrypted.toString('utf-8'), plaintext.toString('utf-8'))
+  })
+
+  it('fails decryption with wrong key', () => {
+    const eavesdropper = generateKeypair()
+    const wrongKey = deriveSharedSecret(eavesdropper.privateKey, generateKeypair().publicKey)
+    const encrypted = encryptBuffer(Buffer.from('secret'), sharedKey)
+    assert.throws(() => decryptBuffer(encrypted.iv, encrypted.tag, encrypted.ciphertext, wrongKey))
+  })
+
+  it('fails decryption with tampered ciphertext', () => {
+    const encrypted = encryptBuffer(Buffer.from('tamper test'), sharedKey)
+    const tampered = Buffer.from(encrypted.ciphertext.map((b) => b ^ 0xff))
+    assert.throws(() => decryptBuffer(encrypted.iv, encrypted.tag, tampered, sharedKey))
+  })
+
+  it('produces different ciphertext for same plaintext (no IV reuse)', () => {
+    const plaintext = Buffer.from('same binary message')
+    const e1 = encryptBuffer(plaintext, sharedKey)
+    const e2 = encryptBuffer(plaintext, sharedKey)
+    assert.notEqual(e1.iv.toString('hex'), e2.iv.toString('hex'))
+    assert.notEqual(e1.ciphertext.toString('hex'), e2.ciphertext.toString('hex'))
+  })
+
+  it('interoperates with encrypt/decrypt base64 format', () => {
+    const plaintext = 'json message here'
+    const b64Enc = encrypt(plaintext, sharedKey)
+    const b64Dec = decrypt(b64Enc, sharedKey)
+    assert.equal(b64Dec, plaintext)
+
+    const binEnc = encryptBuffer(Buffer.from(plaintext, 'utf-8'), sharedKey)
+    const binDec = decryptBuffer(binEnc.iv, binEnc.tag, binEnc.ciphertext, sharedKey)
+    assert.equal(binDec.toString('utf-8'), plaintext)
   })
 })
 

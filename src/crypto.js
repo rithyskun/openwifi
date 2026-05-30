@@ -53,8 +53,22 @@ function decrypt(packet, sharedKey) {
   return decrypted.toString('utf-8')
 }
 
+function encryptBuffer(plaintextBuffer, sharedKey) {
+  const iv = crypto.randomBytes(IV_LENGTH)
+  const cipher = crypto.createCipheriv(ALGORITHM, sharedKey, iv)
+  const encrypted = Buffer.concat([cipher.update(plaintextBuffer), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return { iv, tag, ciphertext: encrypted }
+}
+
+function decryptBuffer(iv, tag, ciphertext, sharedKey) {
+  const decipher = crypto.createDecipheriv(ALGORITHM, sharedKey, iv)
+  decipher.setAuthTag(tag)
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()])
+}
+
 function generatePIN() {
   return String(crypto.randomInt(100000, 1000000))
 }
 
-module.exports = { generateKeypair, deriveSharedSecret, encrypt, decrypt, generatePIN }
+module.exports = { generateKeypair, deriveSharedSecret, encrypt, decrypt, encryptBuffer, decryptBuffer, generatePIN }
