@@ -2,6 +2,7 @@ const path = require('path')
 const os = require('os')
 const { v4: uuidv4 } = require('uuid')
 const { generateKeypair } = require('./crypto')
+const { Vault } = require('./vault')
 const { createDatabase } = require('./db')
 const { createDiscovery } = require('./discovery')
 const { createPeerManager } = require('./peer-manager')
@@ -17,15 +18,37 @@ let tcpPortIndex = args.indexOf('--tcp-port')
 const tcpPort = tcpPortIndex !== -1 ? parseInt(args[tcpPortIndex + 1], 10) : 0
 let dbPathIndex = args.indexOf('--db')
 const dbPath = dbPathIndex !== -1 ? args[dbPathIndex + 1] : path.join(__dirname, '..', 'openwifi.db')
+let secretIndex = args.indexOf('--secret')
+const secretArg = secretIndex !== -1 ? args[secretIndex + 1] : null
+const secret = secretArg || process.env.OPENWIFI_SECRET || null
 
 const peerId = uuidv4().slice(0, 8)
 
-const db = createDatabase(dbPath)
+let vault = null
+if (secret) {
+  const dbRaw = createDatabase(dbPath)
+  let salt = dbRaw.getVaultSalt()
+  if (!salt) {
+    salt = Vault.generateSalt()
+    dbRaw.saveVaultSalt(salt)
+    console.log(`  Vault: initialized with new salt`)
+  }
+  vault = Vault.fromPassphrase(secret, salt)
+  dbRaw.close()
+}
+
+const vaultMode = vault ? 'encrypted' : 'plaintext'
+const db = createDatabase(dbPath, vault)
 
 let keypair = db.getKeypair()
 if (!keypair) {
   keypair = generateKeypair()
   db.saveKeypair(keypair.publicKey, keypair.privateKey)
+}
+
+if (secret && !vault) {
+  console.error('  Fatal: failed to unlock vault, wrong passphrase?')
+  process.exit(1)
 }
 
 const pendingPINAuths = new Map()
@@ -73,7 +96,13 @@ async function main() {
   console.log(`  TCP:    ${localIP}:${actualTcpPort}`)
   console.log(`  Web UI: http://localhost:${actualWebPort}`)
   console.log(`  DB:     ${dbPath}`)
+  console.log(`  Vault:  ${vaultMode}`)
   console.log(`  E2E:    X25519 + AES-256-GCM\n`)
+
+  if (!secret) {
+    console.log('  ⚠  No --secret provided. Database is NOT encrypted.')
+    console.log('  ⚠  Use --secret "<passphrase>" or OPENWIFI_SECRET to secure your data.\n')
+  }
 }
 
 function onPeerFound(peer) {

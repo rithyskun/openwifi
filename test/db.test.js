@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const path = require('path')
 const fs = require('fs')
 const { createDatabase } = require('../src/db')
+const { Vault } = require('../src/vault')
 
 describe('createDatabase', () => {
   let dbPath
@@ -102,5 +103,75 @@ describe('createDatabase', () => {
     db.removeTrustedPeer('alpha')
     assert.equal(db.isTrustedPeer('alpha'), false)
     assert.equal(db.isTrustedPeer('beta'), true)
+  })
+})
+
+describe('createDatabase with Vault encryption', () => {
+  let dbPath
+  let vault
+  let db
+
+  before(() => {
+    dbPath = path.join(__dirname, 'test_vault_openwifi.db')
+    const salt = Vault.generateSalt()
+    vault = Vault.fromPassphrase('my-vault-passphrase', salt)
+    db = createDatabase(dbPath, vault)
+    db.saveVaultSalt(salt)
+  })
+
+  after(() => {
+    db.close()
+    try { fs.unlinkSync(dbPath) } catch {}
+    try { fs.unlinkSync(dbPath + '-wal') } catch {}
+    try { fs.unlinkSync(dbPath + '-shm') } catch {}
+  })
+
+  it('stores private key encrypted (not plaintext) in SQLite', () => {
+    db.saveKeypair('pub-enc-test', 'priv-enc-test')
+    const rawDb = new (require('better-sqlite3'))(dbPath)
+    const row = rawDb.prepare("SELECT value FROM config WHERE key = 'private_key'").get()
+    rawDb.close()
+    assert(row.value.startsWith('{'), 'private_key should be JSON-encrypted in db')
+  })
+
+  it('retrieves keypair correctly through vault', () => {
+    const result = db.getKeypair()
+    assert.equal(result.publicKey, 'pub-enc-test')
+    assert.equal(result.privateKey, 'priv-enc-test')
+  })
+
+  it('vault-decrypted keypair is unusable with wrong passphrase', () => {
+    const wrongVault = Vault.fromPassphrase('wrong-passphrase-here', Vault.generateSalt())
+    const wrongDb = createDatabase(dbPath, wrongVault)
+    const result = wrongDb.getKeypair()
+    assert.equal(result, null)
+    wrongDb.close()
+  })
+
+  it('stores trusted peer public key encrypted in SQLite', () => {
+    db.addTrustedPeer('v-peer-1', 'VaultAlice', 'vault-alice-pub-key')
+    const rawDb = new (require('better-sqlite3'))(dbPath)
+    const row = rawDb.prepare("SELECT public_key FROM trusted_peers WHERE peer_id = 'v-peer-1'").get()
+    rawDb.close()
+    assert(row.public_key.startsWith('{'), 'public_key should be JSON-encrypted in db')
+  })
+
+  it('retrieves trusted peer with decrypted public key', () => {
+    const peer = db.getTrustedPeer('v-peer-1')
+    assert.equal(peer.peer_name, 'VaultAlice')
+    assert.equal(peer.public_key, 'vault-alice-pub-key')
+  })
+
+  it('lists vault peers with decrypted keys', () => {
+    db.addTrustedPeer('v-peer-2', 'VaultBob', 'vault-bob-key')
+    const list = db.listTrustedPeers()
+    const bob = list.find((p) => p.peer_id === 'v-peer-2')
+    assert(bob)
+    assert.equal(bob.public_key, 'vault-bob-key')
+  })
+
+  it('isTrustedPeer works with vault', () => {
+    assert.equal(db.isTrustedPeer('v-peer-1'), true)
+    assert.equal(db.isTrustedPeer('nonexistent-vault'), false)
   })
 })

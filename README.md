@@ -6,6 +6,7 @@ A cross-platform peer-to-peer mesh network over WiFi with end-to-end encryption 
 
 - **Zero-config discovery** — mDNS/Zeroconf automatically finds peers on the local network
 - **End-to-end encryption** — X25519 ECDH key exchange + AES-256-GCM on every message
+- **Database encryption** — Vault class with PBKDF2-derived AES-256-GCM key encrypts all sensitive data at rest
 - **PIN authentication** — 6-digit PIN verification prevents unauthorized access
 - **Mesh routing** — Messages are flooded through the mesh with TTL and duplicate suppression
 - **File sharing** — Drag-and-drop file transfers through the encrypted channel
@@ -43,6 +44,7 @@ A cross-platform peer-to-peer mesh network over WiFi with end-to-end encryption 
 4. If the peer isn't in the trusted database, a **6-digit PIN** is shown on one screen and must be entered on the other
 5. After PIN verification, the peer is stored in **SQLite** and all messages are **encrypted end-to-end**
 6. Messages propagate through the mesh via **controlled flooding** (TTL + duplicate suppression)
+7. All sensitive data in SQLite (X25519 private key, trusted peer public keys) is **encrypted at rest** using a **Vault** key derived from your passphrase via PBKDF2-SHA256
 
 ## Installation
 
@@ -113,6 +115,32 @@ Both nodes will discover each other automatically. The Web UI will guide you thr
 | Per-message IV | Random 16 bytes |
 | Auth tag | 16 bytes (verified on decrypt) |
 
+### Database encryption (Vault)
+
+Sensitive data in the SQLite database is encrypted at rest using a **Vault** class:
+
+| Layer | Algorithm |
+|---|---|
+| Key derivation | PBKDF2-SHA512 (200 000 iterations) |
+| Encryption | AES-256-GCM |
+| Salt | Random 32 bytes, stored in plaintext |
+| Per-field IV | Random 16 bytes |
+
+When `--secret` is provided on first run, a random salt is generated and stored. The passphrase + salt derive the 256-bit AES key that encrypts:
+
+- X25519 **private key** — encrypted before writing to the `config` table
+- **Trusted peer public keys** — encrypted before writing to the `trusted_peers` table
+
+Without the correct passphrase, the database contents are undecipherable. The passphrase must be at least 8 characters.
+
+```bash
+# Provide secret via CLI
+npm start -- --secret "my-strong-passphrase"
+
+# Or via environment variable
+OPENWIFI_SECRET="my-strong-passphrase" npm start
+```
+
 ### Authentication flow
 
 1. Requester sends `_auth_request` (encrypted)
@@ -140,7 +168,12 @@ openwifi/
 │   ├── index.js         # Main entry point, auth orchestrator
 │   ├── peer-manager.js  # TCP connections, encryption layer
 │   ├── router.js        # Mesh message flooding
-│   └── web-ui.js        # Express + Socket.IO server
+│   ├── web-ui.js        # Express + Socket.IO server
+│   └── vault.js         # PBKDF2 + AES-256-GCM data-at-rest encryption
+├── test/
+│   ├── crypto.test.js   # 27 tests — ECDH, AES, tamper detection
+│   ├── vault.test.js    # 19 tests — PBKDF2, encrypt/decrypt, seal/unseal
+│   └── db.test.js       # 20 tests — plaintext + vault mode
 └── public/
     ├── index.html       # Web UI layout
     ├── app.js           # Frontend logic
@@ -155,6 +188,8 @@ openwifi/
 | `--web-port <port>` | Random | Web UI HTTP port |
 | `--tcp-port <port>` | Random | P2P TCP port |
 | `--db <path>` | `./openwifi.db` | SQLite database path |
+| `--secret <passphrase>` | — | Passphrase to encrypt the database (min 8 chars) |
+| `OPENWIFI_SECRET` env | — | Alternative to `--secret` |
 
 ## Development
 
