@@ -566,6 +566,94 @@ body {
   cursor: not-allowed;
 }
 
+.ai-tool-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 8px 12px;
+  margin: 4px 0;
+  background: rgba(102, 179, 255, 0.1);
+  border: 1px solid rgba(102, 179, 255, 0.3);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #66b3ff;
+}
+
+.ai-tool-icon {
+  font-size: 14px;
+  margin-right: 6px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.ai-tool-name {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ai-tool-args {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: #8899aa;
+  max-height: 100px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.ai-tool-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 8px 12px;
+  margin: 4px 0;
+  background: rgba(46, 204, 113, 0.1);
+  border: 1px solid rgba(46, 204, 113, 0.3);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.ai-tool-result-header {
+  color: #2ecc71;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.ai-tool-result-content {
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: #c0c8d0;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+#ai-streaming .ai-message-content::after {
+  content: '▊';
+  animation: blink 1s infinite;
+  color: #66b3ff;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
 .send-status {
   font-size: 11px;
   color: #8899aa;

@@ -10,7 +10,8 @@ const { createPeerManager } = require('./peer-manager')
 const { createRouter } = require('./router')
 const { createWebUI } = require('./web-ui')
 const { FileTransferManager } = require('./file-transfer')
-const { PIN_TIMEOUT, PIN_MAX_ATTEMPTS, RECONNECT_BASE_DELAY, RECONNECT_MAX_DELAY, AI_URL, AI_MODEL, AI_TEMPERATURE, AI_MAX_TOKENS, AI_TIMEOUT, AI_MAX_MESSAGES, AI_MAX_MESSAGE_LENGTH } = require('./config')
+const { createLMStudioAgent } = require('./lm-studio')
+const { PIN_TIMEOUT, PIN_MAX_ATTEMPTS, RECONNECT_BASE_DELAY, RECONNECT_MAX_DELAY, AI_URL, AI_MODEL, AI_TEMPERATURE, AI_MAX_TOKENS, AI_TIMEOUT, AI_MAX_MESSAGES, AI_MAX_MESSAGE_LENGTH, LM_STUDIO_ENABLED } = require('./config')
 
 function isValidAIMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0 || messages.length > AI_MAX_MESSAGES) return false
@@ -117,6 +118,20 @@ const router = createRouter(
 
 const fileTransfer = new FileTransferManager(peerManager)
 
+const pendingAIRequests = new Map()
+
+let lmStudio = null
+if (LM_STUDIO_ENABLED) {
+  lmStudio = createLMStudioAgent({
+    selfId: peerId,
+    selfName: peerName,
+    getPeers: () => peerManager.getConnectedPeers(),
+    getDiscoveredPeers: () => Array.from(discoveredPeers.values()),
+    sendMessage: (to, payload) => router.sendMessage(to, payload),
+    pendingAIRequests,
+  })
+}
+
 fileTransfer.on('download-announce', (info) => {
   webUI.broadcastFileTransferEvent({ ...info, action: 'announce' })
 })
@@ -150,6 +165,7 @@ const webUI = createWebUI({
   onConnectPeer,
   sendMessage: (to, payload) => router.sendMessage(to, payload),
   onPINSubmit,
+  lmStudio,
   onFileTransferStart: ({ transferId, fileName, fileSize, to }) => {
     fileTransfer.startTransfer(transferId, fileName, fileSize, to)
   },
@@ -272,6 +288,16 @@ function onMessageReceived(msg, fromPeerId) {
     if (msg.type === 'ai-response') {
       if (msg.to === peerId) {
         const payload = msg.payload || {}
+        const pending = pendingAIRequests.get(payload.requestId)
+        if (pending) {
+          clearTimeout(pending.timeout)
+          pendingAIRequests.delete(payload.requestId)
+          if (payload.error) {
+            pending.resolve(`Error: ${payload.error}`)
+          } else {
+            pending.resolve(payload.response || '(no response)')
+          }
+        }
         webUI.broadcastAIMessage({
           requestId: payload.requestId,
           response: payload.response,

@@ -26,6 +26,9 @@ const mainViews = document.querySelectorAll('.main-view')
 let aiChatHistory = []
 const pendingAIRequests = new Map()
 const AI_MAX_HISTORY = 50
+let aiStreamingContent = ''
+let aiStreamingEl = null
+let lmStudioAvailable = false
 
 const CHUNK_SIZE = 1048576
 const PIPELINE_DEPTH = 8
@@ -706,10 +709,85 @@ function removeAILoading() {
   if (el) el.remove()
 }
 
+function appendAIStreamingMessage() {
+  const div = document.createElement('div')
+  div.className = 'ai-message assistant'
+  div.id = 'ai-streaming'
+  const content = document.createElement('div')
+  content.className = 'ai-message-content'
+  content.id = 'ai-streaming-content'
+  div.appendChild(content)
+  aiMessagesEl.appendChild(div)
+  aiStreamingEl = content
+  aiStreamingContent = ''
+  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight
+}
+
+function appendAIToolIndicator(toolName, args) {
+  const div = document.createElement('div')
+  div.className = 'ai-tool-indicator'
+  div.innerHTML = `<span class="ai-tool-icon">&#9881;</span> <span class="ai-tool-name">${escapeHtml(toolName)}</span>`
+  if (args && Object.keys(args).length > 0) {
+    const argsEl = document.createElement('div')
+    argsEl.className = 'ai-tool-args'
+    argsEl.textContent = JSON.stringify(args, null, 2)
+    div.appendChild(argsEl)
+  }
+  aiMessagesEl.appendChild(div)
+  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight
+}
+
+function appendAIToolResult(toolName, result) {
+  const div = document.createElement('div')
+  div.className = 'ai-tool-result'
+  const header = document.createElement('div')
+  header.className = 'ai-tool-result-header'
+  header.textContent = `Result: ${escapeHtml(toolName)}`
+  div.appendChild(header)
+  const content = document.createElement('div')
+  content.className = 'ai-tool-result-content'
+  content.textContent = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+  div.appendChild(content)
+  aiMessagesEl.appendChild(div)
+  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight
+}
+
+function finalizeAIStreaming() {
+  if (aiStreamingEl) {
+    aiStreamingEl.removeAttribute('id')
+    aiStreamingEl = null
+  }
+  if (aiStreamingContent) {
+    aiChatHistory.push({ role: 'assistant', content: aiStreamingContent })
+    if (aiChatHistory.length > AI_MAX_HISTORY) {
+      aiChatHistory = aiChatHistory.slice(-AI_MAX_HISTORY)
+    }
+  }
+  aiStreamingContent = ''
+}
+
 function checkAIStatus() {
   fetch('/api/ai/status').then(r => r.json()).then(data => {
-    aiStatusEl.textContent = `AI: ${data.model}`
-    aiStatusEl.className = 'ai-status online'
+    if (data.lmStudio) {
+      fetch('/api/ai/lmstudio/status').then(r => r.json()).then(lmData => {
+        lmStudioAvailable = lmData.available
+        if (lmData.available) {
+          aiStatusEl.textContent = `AI: ${lmData.model} (Agentic)`
+          aiStatusEl.className = 'ai-status online'
+        } else {
+          aiStatusEl.textContent = `AI: ${data.model} (LM Studio offline)`
+          aiStatusEl.className = 'ai-status online'
+        }
+      }).catch(() => {
+        lmStudioAvailable = false
+        aiStatusEl.textContent = `AI: ${data.model}`
+        aiStatusEl.className = 'ai-status online'
+      })
+    } else {
+      lmStudioAvailable = false
+      aiStatusEl.textContent = `AI: ${data.model}`
+      aiStatusEl.className = 'ai-status online'
+    }
   }).catch(() => {
     aiStatusEl.textContent = 'AI: Offline'
     aiStatusEl.className = 'ai-status offline'
@@ -731,10 +809,15 @@ async function sendAIMessage() {
     aiChatHistory = aiChatHistory.slice(-AI_MAX_HISTORY)
   }
   appendAIMessage('user', text)
-  appendAILoading()
 
   const target = aiTargetSelect.value
-  if (target === '__local__') {
+
+  if (target === '__local__' && lmStudioAvailable) {
+    appendAIStreamingMessage()
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    socket.emit('ai-agent-chat', { requestId, messages: aiChatHistory })
+  } else if (target === '__local__') {
+    appendAILoading()
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
@@ -764,6 +847,7 @@ async function sendAIMessage() {
       appendAIMessage('error', `AI service unreachable: ${err.message}`)
     }
   } else {
+    appendAILoading()
     const requestId = `${selfInfo.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     pendingAIRequests.set(requestId, { messages: [...aiChatHistory] })
     socket.emit('ai-request', { to: target, requestId, messages: aiChatHistory })
@@ -787,6 +871,49 @@ socket.on('ai-message', (data) => {
     aiChatHistory.push({ role: 'assistant', content: reply })
     appendAIMessage('assistant', reply)
   }
+})
+
+socket.on('ai-agent-stream', (data) => {
+  if (!data || typeof data.content !== 'string') return
+  if (!aiStreamingEl) return
+  aiStreamingContent += data.content
+  aiStreamingEl.textContent = aiStreamingContent
+  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight
+})
+
+socket.on('ai-agent-message', (data) => {
+  if (!data || typeof data.content !== 'string') return
+})
+
+socket.on('ai-agent-tool-call', (data) => {
+  if (!data || typeof data.tool !== 'string') return
+  appendAIToolIndicator(data.tool, data.args)
+})
+
+socket.on('ai-agent-tool-result', (data) => {
+  if (!data || typeof data.tool !== 'string') return
+  appendAIToolResult(data.tool, data.result)
+})
+
+socket.on('ai-agent-complete', (data) => {
+  if (!data) return
+  finalizeAIStreaming()
+  aiInput.disabled = false
+  aiSendBtn.disabled = false
+  aiInput.focus()
+})
+
+socket.on('ai-agent-error', (data) => {
+  if (!data) return
+  if (aiStreamingEl) {
+    aiStreamingEl.parentElement.remove()
+    aiStreamingEl = null
+    aiStreamingContent = ''
+  }
+  appendAIMessage('error', data.error || 'AI agent error')
+  aiInput.disabled = false
+  aiSendBtn.disabled = false
+  aiInput.focus()
 })
 
 aiSendBtn.addEventListener('click', sendAIMessage)

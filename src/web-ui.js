@@ -6,7 +6,7 @@ const { Server } = require('socket.io')
 const helmet = require('helmet')
 const rateLimit = require('express-rate-limit')
 const crypto = require('crypto')
-const { MAX_MESSAGE_LENGTH, MAX_FILE_NAME_LENGTH, MAX_FILE_SIZE, AI_URL, AI_MODEL, AI_TEMPERATURE, AI_MAX_TOKENS, AI_TIMEOUT, AI_MAX_MESSAGES, AI_MAX_MESSAGE_LENGTH } = require('./config')
+const { MAX_MESSAGE_LENGTH, MAX_FILE_NAME_LENGTH, MAX_FILE_SIZE, AI_URL, AI_MODEL, AI_TEMPERATURE, AI_MAX_TOKENS, AI_TIMEOUT, AI_MAX_MESSAGES, AI_MAX_MESSAGE_LENGTH, LM_STUDIO_ENABLED } = require('./config')
 
 const WS_RATE_LIMIT_WINDOW = 60 * 1000
 const WS_RATE_LIMIT_MAX = 60
@@ -142,7 +142,20 @@ function createWebUI(peerInfo) {
   }
 
   app.get('/api/ai/status', (req, res) => {
-    res.json({ url: AI_URL, model: AI_MODEL })
+    res.json({ url: AI_URL, model: AI_MODEL, lmStudio: LM_STUDIO_ENABLED })
+  })
+
+  app.get('/api/ai/lmstudio/status', async (req, res) => {
+    if (!LM_STUDIO_ENABLED) {
+      res.json({ available: false, error: 'LM Studio disabled' })
+      return
+    }
+    if (peerInfo.lmStudio) {
+      const status = await peerInfo.lmStudio.checkStatus()
+      res.json(status)
+    } else {
+      res.json({ available: false, error: 'LM Studio not initialized' })
+    }
   })
 
   app.post('/api/ai/chat', express.json({ limit: '256kb' }), async (req, res) => {
@@ -337,6 +350,40 @@ function createWebUI(peerInfo) {
         messages: data.messages,
       })
     })
+
+    socket.on('ai-agent-chat', async (data) => {
+      if (!checkWsRateLimit(socket.id)) return
+      if (!LM_STUDIO_ENABLED) {
+        socket.emit('ai-agent-error', { requestId: data?.requestId, error: 'LM Studio disabled' })
+        return
+      }
+      if (!data || typeof data.requestId !== 'string' || !data.requestId) return
+      if (!validateAIMessages(data.messages)) return
+      if (!peerInfo.lmStudio) {
+        socket.emit('ai-agent-error', { requestId: data.requestId, error: 'LM Studio not initialized' })
+        return
+      }
+
+      try {
+        await peerInfo.lmStudio.chat(data.messages, {
+          onStream: (content) => {
+            socket.emit('ai-agent-stream', { requestId: data.requestId, content })
+          },
+          onMessage: (message) => {
+            socket.emit('ai-agent-message', { requestId: data.requestId, content: message })
+          },
+          onToolCall: (name, args) => {
+            socket.emit('ai-agent-tool-call', { requestId: data.requestId, tool: name, args })
+          },
+          onToolResult: (name, result) => {
+            socket.emit('ai-agent-tool-result', { requestId: data.requestId, tool: name, result })
+          },
+        })
+        socket.emit('ai-agent-complete', { requestId: data.requestId })
+      } catch (err) {
+        socket.emit('ai-agent-error', { requestId: data.requestId, error: err.message })
+      }
+    })
   })
 
   function start(portToUse) {
@@ -378,6 +425,18 @@ function createWebUI(peerInfo) {
     io.emit('ai-message', data)
   }
 
+  function broadcastAIAgentStream(data) {
+    io.emit('ai-agent-stream', data)
+  }
+
+  function broadcastAIAgentToolCall(data) {
+    io.emit('ai-agent-tool-call', data)
+  }
+
+  function broadcastAIAgentToolResult(data) {
+    io.emit('ai-agent-tool-result', data)
+  }
+
   function stop() {
     io.close()
     server.close()
@@ -387,6 +446,7 @@ function createWebUI(peerInfo) {
     start, stop, getPort: () => port,
     broadcastAppMessage, broadcastPeers, broadcastDiscoveredPeers, broadcastPeerAuthEvent,
     broadcastFileTransferEvent, broadcastAIMessage,
+    broadcastAIAgentStream, broadcastAIAgentToolCall, broadcastAIAgentToolResult,
   }
 }
 
