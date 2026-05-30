@@ -41,6 +41,7 @@ function createWebUI(peerInfo) {
     maxHttpBufferSize: MAX_FILE_SIZE + 1024 * 1024,
   })
   let port = null
+  const pendingAuthByPeer = new Map()
 
   app.disable('x-powered-by')
 
@@ -118,6 +119,10 @@ function createWebUI(peerInfo) {
     })
 
     socket.emit('peer-list', peerInfo.getPeers())
+
+    for (const [, event] of pendingAuthByPeer) {
+      socket.emit('peer-auth-event', event)
+    }
 
     socket.on('disconnect', () => {
       wsLimits.delete(socket.id)
@@ -218,6 +223,11 @@ function createWebUI(peerInfo) {
   }
 
   function broadcastPeerAuthEvent(event) {
+    if (event.type === 'pin_required' || event.type === 'awaiting_pin') {
+      pendingAuthByPeer.set(event.peerId, event)
+    } else if (event.type === 'authenticated' || event.type === 'auth_failed' || event.type === 'aborted') {
+      pendingAuthByPeer.delete(event.peerId)
+    }
     io.emit('peer-auth-event', event)
   }
 

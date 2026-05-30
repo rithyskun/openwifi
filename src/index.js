@@ -309,8 +309,12 @@ function handleIncomingAuthRequest(fromPeerId, fromName) {
 
 function handleIncomingAuthChallenge(msg, fromPeerId) {
   const peer = peerManager.getPeerInfo(fromPeerId)
-  if (!peer) return
+  if (!peer) {
+    console.log(`  Auth challenge: no peer info for ${fromPeerId}`)
+    return
+  }
 
+  console.log(`  Auth challenge from ${peer.name} (${fromPeerId}) — showing PIN input`)
   webUI.broadcastPeerAuthEvent({
     type: 'awaiting_pin',
     peerId: fromPeerId,
@@ -321,6 +325,7 @@ function handleIncomingAuthChallenge(msg, fromPeerId) {
 function handleIncomingAuthResponse(msg, fromPeerId) {
   const pending = pendingPINAuths.get(fromPeerId)
   if (!pending) {
+    console.log(`  Auth response from ${fromPeerId}: no pending auth`)
     peerManager.sendToPeer(fromPeerId, {
       type: '_auth_result',
       payload: { success: false, message: 'No pending auth' },
@@ -332,7 +337,10 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
 
   if (submittedPIN === pending.pin) {
     const peer = peerManager.getPeerInfo(fromPeerId)
-    if (!peer) return
+    if (!peer) {
+      console.log(`  Auth response: peer ${fromPeerId} gone before verify`)
+      return
+    }
 
     pendingPINAuths.delete(fromPeerId)
     pinFailures.delete(fromPeerId)

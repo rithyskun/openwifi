@@ -247,6 +247,7 @@ function startSendingChunks(transferId) {
 }
 
 function handleAuthEvent(event) {
+  console.log('[auth]', event.type, event.peerId, event.peerName)
   if (event.type === 'pin_required') {
     showPINRequired(event.peerId, event.peerName, event.pin)
   } else if (event.type === 'awaiting_pin') {
