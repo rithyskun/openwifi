@@ -13,17 +13,32 @@
         <h1>OpenWiFi</h1>
         <div id="self-info"></div>
       </div>
-      <div id="sidebar-tabs">
-        <button class="sidebar-tab active" data-tab="peers">Peers</button>
-        <button class="sidebar-tab" data-tab="ai">AI</button>
-      </div>
-      <div id="peer-section" class="sidebar-panel active">
+      <div id="peer-section">
         <h2>Available</h2>
         <ul id="discovered-list"></ul>
         <h2>Connected (<span id="peer-count">0</span>)</h2>
         <ul id="peer-list"></ul>
       </div>
-      <div id="ai-section" class="sidebar-panel">
+    </aside>
+    <main id="main">
+      <div id="main-tabs">
+        <button class="main-tab active" data-view="chat">Chat</button>
+        <button class="main-tab" data-view="ai">AI</button>
+      </div>
+      <div id="chat-view" class="main-view active">
+        <div id="messages"></div>
+        <div id="input-area">
+          <select id="target-select">
+            <option value="*broadcast*">Broadcast (All)</option>
+          </select>
+          <input type="text" id="message-input" placeholder="Type a message..." autofocus>
+          <button id="send-btn">Send</button>
+          <label id="file-btn" class="btn">File
+            <input type="file" id="file-input" hidden>
+          </label>
+        </div>
+      </div>
+      <div id="ai-view" class="main-view">
         <div id="ai-status" class="ai-status offline">AI: Checking...</div>
         <div id="ai-messages"></div>
         <div id="ai-input-area">
@@ -35,20 +50,6 @@
             <button id="ai-send-btn">Ask</button>
           </div>
         </div>
-      </div>
-    </aside>
-    <main id="main">
-      <div id="messages"></div>
-      <div id="input-area">
-        <select id="target-select">
-          <option value="*broadcast*">Broadcast (All)</option>
-        </select>
-        <input type="text" id="message-input" placeholder="Type a message..." autofocus>
-        <button id="send-btn">Send</button>
-        <label id="file-btn" class="btn">File
-          <input type="file" id="file-input" hidden>
-        </label>
-      </div>
       </div>
     </main>
   </div>

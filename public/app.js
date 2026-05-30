@@ -20,8 +20,8 @@ const aiInput = document.getElementById('ai-input')
 const aiSendBtn = document.getElementById('ai-send-btn')
 const aiTargetSelect = document.getElementById('ai-target-select')
 const aiStatusEl = document.getElementById('ai-status')
-const sidebarTabs = document.querySelectorAll('.sidebar-tab')
-const sidebarPanels = document.querySelectorAll('.sidebar-panel')
+const mainTabs = document.querySelectorAll('.main-tab')
+const mainViews = document.querySelectorAll('.main-view')
 
 let aiChatHistory = []
 const pendingAIRequests = new Map()
@@ -663,17 +663,22 @@ function escapeHtml(str) {
   return div.innerHTML
 }
 
-function switchSidebarTab(tabName) {
-  for (const tab of sidebarTabs) {
-    tab.classList.toggle('active', tab.dataset.tab === tabName)
+function switchMainView(viewName) {
+  for (const tab of mainTabs) {
+    tab.classList.toggle('active', tab.dataset.view === viewName)
   }
-  for (const panel of sidebarPanels) {
-    panel.classList.toggle('active', panel.id === `${tabName}-section`)
+  for (const view of mainViews) {
+    view.classList.toggle('active', view.id === `${viewName}-view`)
+  }
+  if (viewName === 'ai') {
+    aiInput.focus()
+  } else {
+    messageInput.focus()
   }
 }
 
-for (const tab of sidebarTabs) {
-  tab.addEventListener('click', () => switchSidebarTab(tab.dataset.tab))
+for (const tab of mainTabs) {
+  tab.addEventListener('click', () => switchMainView(tab.dataset.view))
 }
 
 function appendAIMessage(role, text) {
