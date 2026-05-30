@@ -1,0 +1,411 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+#sidebar {
+  width: 280px;
+  background: #16213e;
+  border-right: 1px solid #0f3460;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+#sidebar-header {
+  padding: 20px;
+  border-bottom: 1px solid #0f3460;
+}
+
+#sidebar-header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #e94560;
+  margin-bottom: 8px;
+}
+
+#self-info {
+  font-size: 12px;
+  color: #8899aa;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+#peer-section {
+  padding: 16px 20px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+#peer-section h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #8899aa;
+  margin-bottom: 12px;
+}
+
+#peer-list {
+  list-style: none;
+}
+
+#peer-list li {
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: #1a1a3e;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#peer-list li:hover {
+  background: #0f3460;
+}
+
+#peer-list li .peer-name {
+  font-weight: 600;
+  display: block;
+}
+
+#peer-list li .peer-id {
+  font-size: 11px;
+  color: #667788;
+}
+
+.peer-status {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  display: inline-block;
+  margin-top: 4px;
+}
+
+.status-secure {
+  color: #2ecc71;
+  border: 1px solid #2ecc71;
+}
+
+.status-pending {
+  color: #f39c12;
+  border: 1px solid #f39c12;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#messages {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message {
+  max-width: 70%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.message.self {
+  align-self: flex-end;
+  background: #e94560;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.message.other {
+  align-self: flex-start;
+  background: #0f3460;
+  border-bottom-left-radius: 4px;
+}
+
+.message.system {
+  align-self: center;
+  background: transparent;
+  color: #667788;
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.message .msg-sender {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e94560;
+  margin-bottom: 4px;
+}
+
+.message.self .msg-sender {
+  color: rgba(255,255,255,0.8);
+}
+
+.message .msg-lock {
+  font-size: 11px;
+  margin-right: 4px;
+  opacity: 0.7;
+}
+
+.message .msg-time {
+  font-size: 10px;
+  color: #667788;
+  margin-top: 4px;
+  text-align: right;
+}
+
+.message .file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.message .file-info .file-icon {
+  font-size: 24px;
+}
+
+.message .file-info .file-details {
+  display: flex;
+  flex-direction: column;
+}
+
+.message .file-info .file-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.message .file-info .file-size {
+  font-size: 11px;
+  color: #8899aa;
+}
+
+.message .file-info .download-btn {
+  margin-top: 6px;
+  padding: 4px 12px;
+  border: 1px solid #e94560;
+  color: #e94560;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.message .file-info .download-btn:hover {
+  background: #e94560;
+  color: #fff;
+}
+
+#input-area {
+  display: flex;
+  gap: 8px;
+  padding: 16px 20px;
+  border-top: 1px solid #0f3460;
+  background: #16213e;
+}
+
+#target-select {
+  background: #1a1a3e;
+  color: #e0e0e0;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+  min-width: 120px;
+}
+
+#message-input {
+  flex: 1;
+  background: #1a1a3e;
+  color: #e0e0e0;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  outline: none;
+}
+
+#message-input:focus {
+  border-color: #e94560;
+}
+
+.btn, #send-btn {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+
+#send-btn {
+  background: #e94560;
+  color: #fff;
+}
+
+#send-btn:hover {
+  background: #d63851;
+}
+
+#file-btn {
+  background: #0f3460;
+  color: #e0e0e0;
+  display: inline-flex;
+  align-items: center;
+}
+
+#file-btn:hover {
+  background: #1a4a7a;
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 16px;
+  padding: 40px;
+  max-width: 400px;
+  width: 90%;
+  text-align: center;
+  animation: modalIn 0.3s ease;
+}
+
+@keyframes modalIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.pin-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.modal-content h2 {
+  font-size: 22px;
+  color: #e0e0e0;
+  margin-bottom: 8px;
+}
+
+.pin-peer {
+  font-size: 16px;
+  color: #e94560;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.pin-label {
+  font-size: 14px;
+  color: #8899aa;
+  margin-bottom: 20px;
+}
+
+.pin-display {
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: 12px;
+  color: #2ecc71;
+  background: #1a1a3e;
+  border-radius: 12px;
+  padding: 16px 24px;
+  margin-bottom: 16px;
+  font-family: 'Courier New', monospace;
+}
+
+.pin-hint {
+  font-size: 12px;
+  color: #667788;
+}
+
+.pin-input {
+  background: #1a1a3e;
+  color: #e0e0e0;
+  border: 2px solid #0f3460;
+  border-radius: 12px;
+  padding: 16px;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 12px;
+  text-align: center;
+  width: 100%;
+  outline: none;
+  font-family: 'Courier New', monospace;
+  margin-bottom: 12px;
+}
+
+.pin-input:focus {
+  border-color: #e94560;
+}
+
+.pin-error {
+  color: #e94560;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.pin-error.hidden {
+  display: none;
+}
+
+.pin-submit-btn {
+  background: #e94560;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 32px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.2s;
+}
+
+.pin-submit-btn:hover {
+  background: #d63851;
+}

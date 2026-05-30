@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenWiFi Mesh</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <h1>OpenWiFi</h1>
+        <div id="self-info"></div>
+      </div>
+      <div id="peer-section">
+        <h2>Peers (<span id="peer-count">0</span>)</h2>
+        <ul id="peer-list"></ul>
+      </div>
+    </aside>
+    <main id="main">
+      <div id="messages"></div>
+      <div id="input-area">
+        <select id="target-select">
+          <option value="*broadcast*">Broadcast (All)</option>
+        </select>
+        <input type="text" id="message-input" placeholder="Type a message..." autofocus>
+        <button id="send-btn">Send</button>
+        <label id="file-btn" class="btn">File
+          <input type="file" id="file-input" hidden>
+        </label>
+      </div>
+    </main>
+  </div>
+
+  <div id="pin-modal" class="modal hidden">
+    <div class="modal-content">
+      <div id="pin-modal-body"></div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

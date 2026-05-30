@@ -1,0 +1,30 @@
+{
+  "name": "openwifi",
+  "version": "1.0.0",
+  "description": "P2P mesh network over WiFi — cross-platform (macOS, Windows, Linux)",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin",
+    "win32",
+    "linux"
+  ],
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "setup": "npm install && node -e \"console.log('OpenWiFi ready. Run: npm start')\"",
+    "install:all": "node -e \"console.log('Run: npm install && npm start')\""
+  },
+  "bin": {
+    "openwifi": "./src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "socket.io": "^4.7.5",
+    "multicast-dns": "^7.2.5",
+    "uuid": "^10.0.0",
+    "better-sqlite3": "^11.0.0"
+  }
+}
