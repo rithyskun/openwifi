@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "start": "node src/index.js",
+    "test": "node --test",
     "dev": "node --watch src/index.js",
     "setup": "npm install && node -e \"console.log('OpenWiFi ready. Run: npm start')\"",
     "install:all": "node -e \"console.log('Run: npm install && npm start')\""
