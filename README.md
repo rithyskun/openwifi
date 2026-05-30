@@ -160,6 +160,8 @@ Pending PIN challenges expire after **120 seconds**.
 openwifi/
 ├── install.sh          # macOS/Linux installer
 ├── install.ps1         # Windows installer
+├── run.sh              # macOS/Linux runner (auto npm install)
+├── run.ps1             # Windows runner (auto npm install)
 ├── package.json
 ├── src/
 │   ├── crypto.js       # X25519, AES-256-GCM, key derivation
@@ -192,6 +194,21 @@ openwifi/
 | `--db <path>` | `./openwifi.db` | SQLite database path |
 | `--secret <passphrase>` | — | Passphrase to encrypt the database (min 8 chars) |
 | `OPENWIFI_SECRET` env | — | Alternative to `--secret` |
+
+## Run scripts
+
+Cross-platform launchers that auto-install dependencies before starting:
+
+```bash
+# macOS / Linux
+./run.sh --name "MyNode" --secret "my key"
+
+# Windows PowerShell
+.\run.ps1 --name "MyNode" --secret "my key"
+
+# Or use npm directly (after npm install)
+npm start -- --name "MyNode" --secret "my key"
+```
 
 ## Development
 
