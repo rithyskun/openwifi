@@ -6,7 +6,7 @@ const { Server } = require('socket.io')
 const helmet = require('helmet')
 const rateLimit = require('express-rate-limit')
 const crypto = require('crypto')
-const { MAX_MESSAGE_LENGTH, MAX_FILE_NAME_LENGTH, MAX_FILE_SIZE } = require('./config')
+const { MAX_MESSAGE_LENGTH, MAX_FILE_NAME_LENGTH, MAX_FILE_SIZE, AI_URL, AI_MODEL, AI_TEMPERATURE, AI_MAX_TOKENS, AI_TIMEOUT, AI_MAX_MESSAGES, AI_MAX_MESSAGE_LENGTH } = require('./config')
 
 const WS_RATE_LIMIT_WINDOW = 60 * 1000
 const WS_RATE_LIMIT_MAX = 60
@@ -131,38 +131,66 @@ function createWebUI(peerInfo) {
     return entry.count <= AI_RATE_LIMIT_MAX
   }
 
+  function validateAIMessages(messages) {
+    if (!Array.isArray(messages) || messages.length === 0 || messages.length > AI_MAX_MESSAGES) return false
+    for (const m of messages) {
+      if (!m || typeof m.role !== 'string' || typeof m.content !== 'string') return false
+      if (!['system', 'user', 'assistant'].includes(m.role)) return false
+      if (m.content.length > AI_MAX_MESSAGE_LENGTH) return false
+    }
+    return true
+  }
+
+  app.get('/api/ai/status', (req, res) => {
+    res.json({ url: AI_URL, model: AI_MODEL })
+  })
+
   app.post('/api/ai/chat', express.json({ limit: '256kb' }), async (req, res) => {
+    const authHeader = req.headers['authorization']
+    const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+    if (!token || token !== peerInfo.wsToken) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
     if (!checkAIRateLimit(req.ip || 'unknown')) {
       res.status(429).json({ error: 'Rate limit exceeded' })
       return
     }
     const body = req.body
-    if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
+    if (!body || !validateAIMessages(body.messages)) {
       res.status(400).json({ error: 'Invalid request' })
       return
     }
     try {
-      const response = await fetch('http://localhost:1234/v1/chat/completions', {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), AI_TIMEOUT)
+      const response = await fetch(AI_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: body.model || 'qwen2.5-coder-14b',
+          model: body.model || AI_MODEL,
           messages: body.messages,
-          temperature: typeof body.temperature === 'number' ? body.temperature : 0.7,
-          max_tokens: typeof body.max_tokens === 'number' ? body.max_tokens : 2048,
+          temperature: typeof body.temperature === 'number' ? body.temperature : AI_TEMPERATURE,
+          max_tokens: typeof body.max_tokens === 'number' ? body.max_tokens : AI_MAX_TOKENS,
           stream: false,
         }),
+        signal: controller.signal,
       })
+      clearTimeout(timer)
       if (!response.ok) {
         const text = await response.text()
-        res.status(502).json({ error: `LM Studio error: ${text}` })
+        res.status(502).json({ error: `AI service error: ${text}` })
         return
       }
       const data = await response.json()
       const content = data.choices?.[0]?.message?.content || ''
       res.json({ response: content })
     } catch (err) {
-      res.status(503).json({ error: `LM Studio unreachable: ${err.message}` })
+      if (err.name === 'AbortError') {
+        res.status(504).json({ error: 'AI service request timed out' })
+      } else {
+        res.status(503).json({ error: `AI service unreachable: ${err.message}` })
+      }
     }
   })
 
@@ -301,8 +329,8 @@ function createWebUI(peerInfo) {
     socket.on('ai-request', (data) => {
       if (!checkWsRateLimit(socket.id)) return
       if (!data || !data.to || typeof data.to !== 'string') return
-      if (!Array.isArray(data.messages) || data.messages.length === 0) return
       if (typeof data.requestId !== 'string' || !data.requestId) return
+      if (!validateAIMessages(data.messages)) return
       peerInfo.sendMessage(data.to, {
         type: 'ai-request',
         requestId: data.requestId,

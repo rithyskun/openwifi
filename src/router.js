@@ -28,7 +28,7 @@ function createRouter(peerInfo, peerManager) {
     const isBroadcast = msg.to === '*broadcast*'
     const isForUs = msg.to === peerInfo.id || isBroadcast
 
-    if (isForUs) {
+    if (isForUs && msg.type !== 'ai-request' && msg.type !== 'ai-response') {
       peerInfo.onAppMessage(msg)
     }
 

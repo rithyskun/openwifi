@@ -10,7 +10,17 @@ const { createPeerManager } = require('./peer-manager')
 const { createRouter } = require('./router')
 const { createWebUI } = require('./web-ui')
 const { FileTransferManager } = require('./file-transfer')
-const { PIN_TIMEOUT, PIN_MAX_ATTEMPTS, RECONNECT_BASE_DELAY, RECONNECT_MAX_DELAY } = require('./config')
+const { PIN_TIMEOUT, PIN_MAX_ATTEMPTS, RECONNECT_BASE_DELAY, RECONNECT_MAX_DELAY, AI_URL, AI_MODEL, AI_TEMPERATURE, AI_MAX_TOKENS, AI_TIMEOUT, AI_MAX_MESSAGES, AI_MAX_MESSAGE_LENGTH } = require('./config')
+
+function isValidAIMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0 || messages.length > AI_MAX_MESSAGES) return false
+  for (const m of messages) {
+    if (!m || typeof m.role !== 'string' || typeof m.content !== 'string') return false
+    if (!['system', 'user', 'assistant'].includes(m.role)) return false
+    if (m.content.length > AI_MAX_MESSAGE_LENGTH) return false
+  }
+  return true
+}
 
 const args = process.argv.slice(2)
 let nameIndex = args.indexOf('--name')
@@ -284,32 +294,36 @@ async function handleAIRequest(msg) {
   const payload = msg.payload || {}
   const requestId = payload.requestId
   const messages = payload.messages
-  if (!requestId || !Array.isArray(messages) || messages.length === 0) {
+  if (!requestId || !isValidAIMessages(messages)) {
     router.sendMessage(msg.from, { type: 'ai-response', requestId, error: 'Invalid request' })
     return
   }
   try {
-    const response = await fetch('http://localhost:1234/v1/chat/completions', {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), AI_TIMEOUT)
+    const response = await fetch(AI_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'qwen2.5-coder-14b',
+        model: AI_MODEL,
         messages,
-        temperature: 0.7,
-        max_tokens: 2048,
+        temperature: AI_TEMPERATURE,
+        max_tokens: AI_MAX_TOKENS,
         stream: false,
       }),
+      signal: controller.signal,
     })
+    clearTimeout(timer)
     if (!response.ok) {
       const text = await response.text()
-      router.sendMessage(msg.from, { type: 'ai-response', requestId, error: `LM Studio error: ${text}` })
+      router.sendMessage(msg.from, { type: 'ai-response', requestId, error: `AI service error: ${text}` })
       return
     }
     const data = await response.json()
     const content = data.choices?.[0]?.message?.content || ''
     router.sendMessage(msg.from, { type: 'ai-response', requestId, response: content })
   } catch (err) {
-    router.sendMessage(msg.from, { type: 'ai-response', requestId, error: `LM Studio unreachable: ${err.message}` })
+    router.sendMessage(msg.from, { type: 'ai-response', requestId, error: `AI service unreachable: ${err.message}` })
   }
 }
 

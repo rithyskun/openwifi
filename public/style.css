@@ -398,6 +398,24 @@ body {
   padding: 0;
 }
 
+.ai-status {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ai-status.online {
+  color: #4caf50;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.ai-status.offline {
+  color: #e94560;
+  background: rgba(233, 69, 96, 0.1);
+}
+
 #ai-messages {
   flex: 1;
   overflow-y: auto;

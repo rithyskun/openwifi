@@ -14,4 +14,11 @@ module.exports = {
   RECONNECT_BASE_DELAY: 1000,
   RECONNECT_MAX_DELAY: 30000,
   SERVICE_NAME: '_openwifi._tcp.local',
+  AI_URL: process.env.OPENWIFI_AI_URL || 'http://localhost:1234/v1/chat/completions',
+  AI_MODEL: process.env.OPENWIFI_AI_MODEL || 'qwen2.5-coder-14b',
+  AI_TEMPERATURE: 0.7,
+  AI_MAX_TOKENS: 2048,
+  AI_TIMEOUT: 120000,
+  AI_MAX_MESSAGES: 50,
+  AI_MAX_MESSAGE_LENGTH: 10000,
 }

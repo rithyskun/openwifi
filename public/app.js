@@ -19,11 +19,13 @@ const aiMessagesEl = document.getElementById('ai-messages')
 const aiInput = document.getElementById('ai-input')
 const aiSendBtn = document.getElementById('ai-send-btn')
 const aiTargetSelect = document.getElementById('ai-target-select')
+const aiStatusEl = document.getElementById('ai-status')
 const sidebarTabs = document.querySelectorAll('.sidebar-tab')
 const sidebarPanels = document.querySelectorAll('.sidebar-panel')
 
 let aiChatHistory = []
 const pendingAIRequests = new Map()
+const AI_MAX_HISTORY = 50
 
 const CHUNK_SIZE = 1048576
 const PIPELINE_DEPTH = 8
@@ -699,6 +701,19 @@ function removeAILoading() {
   if (el) el.remove()
 }
 
+function checkAIStatus() {
+  fetch('/api/ai/status').then(r => r.json()).then(data => {
+    aiStatusEl.textContent = `AI: ${data.model}`
+    aiStatusEl.className = 'ai-status online'
+  }).catch(() => {
+    aiStatusEl.textContent = 'AI: Offline'
+    aiStatusEl.className = 'ai-status offline'
+  })
+}
+
+checkAIStatus()
+setInterval(checkAIStatus, 30000)
+
 async function sendAIMessage() {
   const text = aiInput.value.trim()
   if (!text) return
@@ -707,6 +722,9 @@ async function sendAIMessage() {
   aiSendBtn.disabled = true
 
   aiChatHistory.push({ role: 'user', content: text })
+  if (aiChatHistory.length > AI_MAX_HISTORY) {
+    aiChatHistory = aiChatHistory.slice(-AI_MAX_HISTORY)
+  }
   appendAIMessage('user', text)
   appendAILoading()
 
@@ -715,22 +733,30 @@ async function sendAIMessage() {
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${window.__WS_TOKEN__}`,
+        },
         body: JSON.stringify({ messages: aiChatHistory }),
       })
       removeAILoading()
-      if (!res.ok) {
+      if (res.status === 401) {
+        appendAIMessage('error', 'Authentication error')
+      } else if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Request failed' }))
         appendAIMessage('error', err.error || 'Error')
       } else {
         const data = await res.json()
         const reply = data.response || '(no response)'
         aiChatHistory.push({ role: 'assistant', content: reply })
+        if (aiChatHistory.length > AI_MAX_HISTORY) {
+          aiChatHistory = aiChatHistory.slice(-AI_MAX_HISTORY)
+        }
         appendAIMessage('assistant', reply)
       }
     } catch (err) {
       removeAILoading()
-      appendAIMessage('error', `LM Studio unreachable: ${err.message}`)
+      appendAIMessage('error', `AI service unreachable: ${err.message}`)
     }
   } else {
     const requestId = `${selfInfo.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
