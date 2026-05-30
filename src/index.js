@@ -68,6 +68,7 @@ const pendingPINAuths = new Map()
 const pinFailures = new Map()
 const reconnectBackoff = new Map()
 const MAX_BACKOFF_ENTRIES = 256
+const discoveredPeers = new Map()
 
 const wsToken = crypto.randomBytes(16).toString('hex')
 
@@ -135,6 +136,8 @@ const webUI = createWebUI({
   name: peerName,
   wsToken,
   getPeers: () => peerManager.getConnectedPeers(),
+  getDiscoveredPeers: () => Array.from(discoveredPeers.values()),
+  onConnectPeer,
   sendMessage: (to, payload) => router.sendMessage(to, payload),
   onPINSubmit,
   onFileTransferStart: ({ transferId, fileName, fileSize, to }) => {
@@ -169,17 +172,22 @@ async function main() {
 
 function onPeerFound(peer) {
   if (peerManager.isConnected(peer.id)) return
-  if (peerId.localeCompare(peer.id) < 0) {
-    const existing = reconnectBackoff.get(peer.id)
-    if (existing && existing.nextAttempt > Date.now()) {
-      return
-    }
+  if (discoveredPeers.has(peer.id)) return
+  discoveredPeers.set(peer.id, peer)
+  webUI.broadcastDiscoveredPeers(Array.from(discoveredPeers.values()))
+}
 
-    peerManager.connectToPeer(peer.host, peer.tcpPort)
-  }
+function onConnectPeer(peerId) {
+  const peer = discoveredPeers.get(peerId)
+  if (!peer) return false
+  if (peerManager.isConnected(peerId)) return false
+  peerManager.connectToPeer(peer.host, peer.tcpPort)
+  return true
 }
 
 function onHandshakeComplete(remoteId, remoteName, remotePublicKey, sharedKey) {
+  discoveredPeers.delete(remoteId)
+  webUI.broadcastDiscoveredPeers(Array.from(discoveredPeers.values()))
   webUI.broadcastPeers(peerManager.getConnectedPeers())
 
   const stored = db.getTrustedPeer(remoteId)
@@ -402,6 +410,8 @@ function onPINSubmit(data) {
 
 function onPeerDisconnected(peerId) {
   pendingPINAuths.delete(peerId)
+  discoveredPeers.delete(peerId)
+  webUI.broadcastDiscoveredPeers(Array.from(discoveredPeers.values()))
 
   const backoff = reconnectBackoff.get(peerId)
   let delay = RECONNECT_BASE_DELAY

@@ -140,6 +140,9 @@ function createWebUI(peerInfo) {
     })
 
     socket.emit('peer-list', peerInfo.getPeers())
+    if (peerInfo.getDiscoveredPeers) {
+      socket.emit('discovered-peers', peerInfo.getDiscoveredPeers())
+    }
 
     for (const [, event] of pendingAuthByPeer) {
       socket.emit('peer-auth-event', event)
@@ -230,6 +233,14 @@ function createWebUI(peerInfo) {
         peerInfo.onPINSubmit(data)
       }
     })
+
+    socket.on('connect-peer', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
+      if (!data || typeof data.peerId !== 'string' || !data.peerId) return
+      if (peerInfo.onConnectPeer) {
+        peerInfo.onConnectPeer(data.peerId)
+      }
+    })
   })
 
   function start(portToUse) {
@@ -248,6 +259,10 @@ function createWebUI(peerInfo) {
 
   function broadcastPeers(peers) {
     io.emit('peer-list', peers)
+  }
+
+  function broadcastDiscoveredPeers(peers) {
+    io.emit('discovered-peers', peers)
   }
 
   function broadcastPeerAuthEvent(event) {
@@ -270,7 +285,7 @@ function createWebUI(peerInfo) {
 
   return {
     start, stop, getPort: () => port,
-    broadcastAppMessage, broadcastPeers, broadcastPeerAuthEvent,
+    broadcastAppMessage, broadcastPeers, broadcastDiscoveredPeers, broadcastPeerAuthEvent,
     broadcastFileTransferEvent,
   }
 }

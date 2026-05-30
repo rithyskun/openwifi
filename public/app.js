@@ -1,9 +1,11 @@
 const socket = io({ auth: { token: window.__WS_TOKEN__ } })
 let selfInfo = null
 let peers = []
+let discoveredPeers = []
 
 const messagesEl = document.getElementById('messages')
 const peerListEl = document.getElementById('peer-list')
+const discoveredListEl = document.getElementById('discovered-list')
 const peerCountEl = document.getElementById('peer-count')
 const targetSelect = document.getElementById('target-select')
 const messageInput = document.getElementById('message-input')
@@ -26,6 +28,11 @@ socket.on('self-info', (info) => {
 socket.on('peer-list', (peerList) => {
   peers = peerList
   renderPeerList()
+})
+
+socket.on('discovered-peers', (list) => {
+  discoveredPeers = list || []
+  renderDiscoveredPeers()
 })
 
 socket.on('app-message', (msg) => {
@@ -428,6 +435,30 @@ pinModal.addEventListener('click', (e) => {
   if (e.target === pinModal) hideModal()
 })
 
+function renderDiscoveredPeers() {
+  discoveredListEl.innerHTML = ''
+  if (discoveredPeers.length === 0) {
+    discoveredListEl.innerHTML = '<li class="discovered-empty">No devices found</li>'
+    return
+  }
+  for (const peer of discoveredPeers) {
+    const li = document.createElement('li')
+    li.className = 'discovered-peer'
+    li.innerHTML = `
+      <span class="peer-name">${escapeHtml(peer.name)}</span>
+      <span class="peer-id">${escapeHtml(peer.id)}</span>
+      <button class="connect-btn" data-peer-id="${escapeHtml(peer.id)}">Connect</button>
+    `
+    li.querySelector('.connect-btn').addEventListener('click', (e) => {
+      e.stopPropagation()
+      socket.emit('connect-peer', { peerId: peer.id })
+      e.target.textContent = 'Connecting...'
+      e.target.disabled = true
+    })
+    discoveredListEl.appendChild(li)
+  }
+}
+
 function renderPeerList() {
   peerListEl.innerHTML = ''
   peerCountEl.textContent = peers.length
@@ -437,14 +468,18 @@ function renderPeerList() {
   targetSelect.innerHTML = ''
   targetSelect.appendChild(broadcastOption)
 
+  if (peers.length === 0) {
+    peerListEl.innerHTML = '<li class="discovered-empty">None connected</li>'
+  }
+
   for (const peer of peers) {
     const li = document.createElement('li')
-      const isAuth = peer.authenticated && peer.sharedKey && peer.handshakeDone
-      li.innerHTML = `
-        <span class="peer-name">${escapeHtml(peer.name)}</span>
-        <span class="peer-id">${escapeHtml(peer.id)}</span>
-        <span class="peer-status ${isAuth ? 'status-secure' : 'status-pending'}">${isAuth ? 'AUTHENTICATED' : 'PENDING'}</span>
-      `
+    const isAuth = peer.authenticated && peer.sharedKey && peer.handshakeDone
+    li.innerHTML = `
+      <span class="peer-name">${escapeHtml(peer.name)}</span>
+      <span class="peer-id">${escapeHtml(peer.id)}</span>
+      <span class="peer-status ${isAuth ? 'status-secure' : 'status-pending'}">${isAuth ? 'AUTHENTICATED' : 'PENDING'}</span>
+    `
     li.addEventListener('click', () => {
       targetSelect.value = peer.id
     })
