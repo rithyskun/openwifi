@@ -43,8 +43,20 @@ if (secret) {
 const vaultMode = vault ? 'encrypted' : 'plaintext'
 const db = createDatabase(dbPath, vault)
 
+function isValidKeypair(kp) {
+  if (!kp || typeof kp.publicKey !== 'string' || typeof kp.privateKey !== 'string') return false
+  try {
+    crypto.createPrivateKey({ key: Buffer.from(kp.privateKey, 'base64'), format: 'der', type: 'pkcs8' })
+    crypto.createPublicKey({ key: Buffer.from(kp.publicKey, 'base64'), format: 'der', type: 'spki' })
+    return true
+  } catch {
+    return false
+  }
+}
+
 let keypair = db.getKeypair()
-if (!keypair) {
+if (!isValidKeypair(keypair)) {
+  console.log('  Generating new keypair (stored keypair was missing or invalid)')
   keypair = generateKeypair()
   db.saveKeypair(keypair.publicKey, keypair.privateKey)
 }

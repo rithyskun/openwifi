@@ -136,7 +136,11 @@ function createPeerManager(peerInfo) {
             remotePublicKey = wireMsg.publicKey || null
 
             if (peerInfo.privateKey && remotePublicKey) {
-              sharedKey = deriveSharedSecret(peerInfo.privateKey, remotePublicKey)
+              try {
+                sharedKey = deriveSharedSecret(peerInfo.privateKey, remotePublicKey)
+              } catch {
+                sharedKey = null
+              }
             }
 
             const existing = peers.get(remotePeerId)
