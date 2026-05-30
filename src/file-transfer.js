@@ -147,10 +147,17 @@ class FileTransferManager extends EventEmitter {
 
     const safeName = sanitizeFilename(fileName)
     const tempPath = path.join(this.tempDir, transferId)
+    const writeStream = fs.createWriteStream(tempPath, { flags: 'w' })
+
+    writeStream.on('error', (err) => {
+      this.emit('download-error', { transferId, error: err.message })
+    })
+
     this.downloads.set(transferId, {
       transferId, fileName: safeName, fileSize, totalChunks,
       fromPeerId, fromName: msg.fromName || 'Unknown',
       tempPath, receivedChunks: 0, status: 'announced',
+      writeStream,
     })
 
     this.emit('download-announce', {
@@ -175,11 +182,15 @@ class FileTransferManager extends EventEmitter {
     if (!dl || dl.fromPeerId !== fromPeerId) return
 
     try {
-      fs.appendFileSync(dl.tempPath, Buffer.from(data, 'base64'))
+      const buf = Buffer.from(data, 'base64')
+      const ok = dl.writeStream.write(buf)
       dl.receivedChunks++
+
       this.emit('download-progress', {
         transferId, received: dl.receivedChunks, total: dl.totalChunks,
       })
+
+      return ok
     } catch (err) {
       this.emit('download-error', { transferId, error: err.message })
     }
@@ -192,6 +203,8 @@ class FileTransferManager extends EventEmitter {
     if (!dl || dl.fromPeerId !== fromPeerId) return
 
     dl.status = 'complete'
+    dl.writeStream.end()
+
     this.emit('download-complete', {
       transferId, fileName: dl.fileName, fileSize: dl.fileSize,
     })
@@ -210,7 +223,12 @@ class FileTransferManager extends EventEmitter {
   _cleanupDownload(transferId) {
     const dl = this.downloads.get(transferId)
     if (!dl) return
-    try { if (fs.existsSync(dl.tempPath)) fs.unlinkSync(dl.tempPath) } catch {}
+    try {
+      if (dl.writeStream && !dl.writeStream.destroyed) {
+        dl.writeStream.destroy()
+      }
+      if (fs.existsSync(dl.tempPath)) fs.unlinkSync(dl.tempPath)
+    } catch {}
     this.downloads.delete(transferId)
   }
 }

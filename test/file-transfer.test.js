@@ -5,6 +5,13 @@ const path = require('path')
 const os = require('os')
 const { FileTransferManager, CHUNK_SIZE } = require('../src/file-transfer')
 
+function finishStream(ws) {
+  return new Promise((resolve) => {
+    if (ws.writableFinished) return resolve()
+    ws.once('finish', resolve)
+  })
+}
+
 function createMockPeerManager() {
   const sent = []
   return {
@@ -109,7 +116,7 @@ describe('FileTransferManager', () => {
     assert.strictEqual(ft.sends.get('t4').status, 'sending')
   })
 
-  it('handleP2PMessage(chunk) writes data and emits progress', () => {
+  it('handleP2PMessage(chunk) writes data and emits progress', async () => {
     const msg = {
       from: 'peer1',
       fromName: 'Sender',
@@ -149,6 +156,10 @@ describe('FileTransferManager', () => {
 
     const dl = ft.downloads.get('t-chunk-test')
     assert.strictEqual(dl.receivedChunks, 1)
+
+    dl.writeStream.end()
+    await finishStream(dl.writeStream)
+
     assert.ok(fs.existsSync(dl.tempPath))
     const content = fs.readFileSync(dl.tempPath, 'utf-8')
     assert.strictEqual(content, 'hello world chunk data')
@@ -202,7 +213,7 @@ describe('FileTransferManager', () => {
     assert.strictEqual(p, cpl.tempPath)
   })
 
-  it('full cycle: announce -> chunk -> done -> download path', () => {
+  it('full cycle: announce -> chunk -> done -> download path', async () => {
     const ft2 = new FileTransferManager(createMockPeerManager())
     const announceMsg = {
       from: 'alice',
@@ -239,6 +250,8 @@ describe('FileTransferManager', () => {
     assert.strictEqual(dl.status, 'complete')
     assert.strictEqual(dl.receivedChunks, 1)
 
+    await finishStream(dl.writeStream)
+
     const filePath = ft2.getDownloadPath('t-cycle')
     assert.ok(fs.existsSync(filePath))
     assert.strictEqual(fs.readFileSync(filePath, 'utf-8'), 'full cycle test data')
@@ -271,7 +284,7 @@ describe('FileTransferManager', () => {
     try { fs.rmSync(ft3.tempDir, { recursive: true, force: true }) } catch {}
   })
 
-  it('handles multiple chunks in sequence', () => {
+  it('handles multiple chunks in sequence', async () => {
     const ft4 = new FileTransferManager(createMockPeerManager())
     ft4.handleP2PMessage(
       {
@@ -316,6 +329,9 @@ describe('FileTransferManager', () => {
     const dl = ft4.getDownloadInfo('t-multi')
     assert.strictEqual(dl.receivedChunks, 4)
     assert.strictEqual(dl.status, 'complete')
+
+    await finishStream(dl.writeStream)
+
     assert.strictEqual(fs.readFileSync(dl.tempPath, 'utf-8'), chunks.join(''))
 
     try { fs.rmSync(ft4.tempDir, { recursive: true, force: true }) } catch {}

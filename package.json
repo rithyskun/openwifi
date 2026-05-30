@@ -24,6 +24,7 @@
   "dependencies": {
     "better-sqlite3": "^11.0.0",
     "express": "^4.21.0",
+    "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "multicast-dns": "^7.2.5",
     "socket.io": "^4.7.5",

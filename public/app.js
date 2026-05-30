@@ -13,7 +13,8 @@ const selfInfoEl = document.getElementById('self-info')
 const pinModal = document.getElementById('pin-modal')
 const pinModalBody = document.getElementById('pin-modal-body')
 
-const CHUNK_SIZE = 65536
+const CHUNK_SIZE = 262144
+const PIPELINE_DEPTH = 4
 const activeSends = new Map()
 
 socket.on('self-info', (info) => {
@@ -194,35 +195,55 @@ function updateSendProgress(event) {
   if (text) text.textContent = pct + '%'
 }
 
+const chunkAcks = {}
+
+socket.on('chunk-ack', ({ transferId }) => {
+  const cb = chunkAcks[transferId]
+  if (cb) cb()
+})
+
 function startSendingChunks(transferId) {
   const send = activeSends.get(transferId)
   if (!send) return
 
   const { file, chunkSize } = send
   const totalChunks = Math.ceil(file.size / chunkSize)
-  let index = 0
+  let nextIndex = 0
+  let inFlight = 0
+  let done = false
 
-  function sendNextChunk() {
-    if (index >= totalChunks) {
+  function sendNextBatch() {
+    if (done) return
+    while (inFlight < PIPELINE_DEPTH && nextIndex < totalChunks) {
+      const index = nextIndex++
+      inFlight++
+      const start = index * chunkSize
+      const end = Math.min(start + chunkSize, file.size)
+      const blob = file.slice(start, end)
+      const reader = new FileReader()
+
+      reader.onload = (e) => {
+        socket.emit('file-chunk-upload', {
+          transferId, index, data: e.target.result,
+        })
+      }
+
+      reader.readAsArrayBuffer(blob)
+    }
+
+    if (nextIndex >= totalChunks && inFlight === 0) {
+      done = true
+      delete chunkAcks[transferId]
       socket.emit('file-transfer-end', { transferId })
-      return
     }
-
-    const start = index * chunkSize
-    const end = Math.min(start + chunkSize, file.size)
-    const blob = file.slice(start, end)
-
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const base64 = e.target.result.split(',')[1]
-      socket.emit('file-chunk-upload', { transferId, index, data: base64 })
-      index++
-      setTimeout(sendNextChunk, 0)
-    }
-    reader.readAsDataURL(blob)
   }
 
-  sendNextChunk()
+  chunkAcks[transferId] = () => {
+    inFlight--
+    sendNextBatch()
+  }
+
+  sendNextBatch()
 }
 
 function handleAuthEvent(event) {
