@@ -34,7 +34,6 @@ if (secret) {
   if (!salt) {
     salt = Vault.generateSalt()
     dbRaw.saveVaultSalt(salt)
-    console.log(`  Vault: initialized with new salt`)
   }
   vault = Vault.fromPassphrase(secret, salt)
   dbRaw.close()
@@ -56,7 +55,6 @@ function isValidKeypair(kp) {
 
 let keypair = db.getKeypair()
 if (!isValidKeypair(keypair)) {
-  console.log('  Generating new keypair (stored keypair was missing or invalid)')
   keypair = generateKeypair()
   db.saveKeypair(keypair.publicKey, keypair.privateKey)
 }
@@ -126,9 +124,6 @@ fileTransfer.on('download-error', (info) => {
 
 fileTransfer.on('send-status', (info) => {
   webUI.broadcastFileTransferEvent({ ...info, action: 'send-status' })
-  if (info.status === 'error') {
-    console.log(`  File transfer error: ${info.error}`)
-  }
 })
 
 fileTransfer.on('send-progress', (info) => {
@@ -170,34 +165,13 @@ async function main() {
   discovery.start()
 
   const localIP = discovery.getLocalIP()
-  console.log(`\n  OpenWiFi Mesh Node`)
-  console.log(`  ─────────────────`)
-  console.log(`  ID:     ${peerId}`)
-  console.log(`  Name:   ${peerName}`)
-  console.log(`  TCP:    ${localIP}:${actualTcpPort}`)
-  console.log(`  Web UI: http://127.0.0.1:${actualWebPort}`)
-  console.log(`  DB:     ${dbPath}`)
-  console.log(`  Vault:  ${vaultMode}`)
-  console.log(`  E2E:    X25519 + AES-256-GCM\n`)
-
-  if (!secret) {
-    console.log('  ⚠  No --secret provided. Database is NOT encrypted.')
-    console.log('  ⚠  Use OPENWIFI_SECRET env var to secure your data.\n')
-  } else if (secretArg) {
-    console.log('  ⚠  Secret passed via --secret is visible in process list (ps).')
-    console.log('  ⚠  Prefer OPENWIFI_SECRET environment variable instead.\n')
-  }
 }
 
 function onPeerFound(peer) {
   if (peerManager.isConnected(peer.id)) return
-  console.log(`  Found peer: ${peer.name} (${peer.id}) at ${peer.host}:${peer.tcpPort}`)
   if (peerId.localeCompare(peer.id) < 0) {
-    console.log(`  Initiating connection to ${peer.name}`)
-
     const existing = reconnectBackoff.get(peer.id)
     if (existing && existing.nextAttempt > Date.now()) {
-      console.log(`  Backoff: skipping ${peer.name}, retry after ${new Date(existing.nextAttempt).toLocaleTimeString()}`)
       return
     }
 
@@ -206,15 +180,12 @@ function onPeerFound(peer) {
 }
 
 function onHandshakeComplete(remoteId, remoteName, remotePublicKey, sharedKey) {
-  console.log(`  Handshake complete: ${remoteName} (${remoteId})`)
   webUI.broadcastPeers(peerManager.getConnectedPeers())
 
   const stored = db.getTrustedPeer(remoteId)
   if (stored) {
     if (stored.public_key && stored.public_key !== remotePublicKey) {
-      console.log(`  ${remoteName} public key mismatch! Re-authentication required.`)
     } else {
-      console.log(`  ${remoteName} is trusted, skipping PIN auth`)
       peerManager.markAuthenticated(remoteId)
       peerManager.sendToPeer(remoteId, { type: '_auth_result', payload: { success: true, skipPIN: true } }, { skipAuth: true })
       notifyAuthReady(remoteId, remoteName)
@@ -224,7 +195,6 @@ function onHandshakeComplete(remoteId, remoteName, remotePublicKey, sharedKey) {
   }
 
   if (peerId.localeCompare(remoteId) < 0) {
-    console.log(`  Requesting PIN auth from ${remoteName}...`)
     peerManager.sendToPeer(remoteId, { type: '_auth_request', payload: { fromName: peerName } }, { skipAuth: true })
   }
 }
@@ -255,19 +225,16 @@ function onMessageReceived(msg, fromPeerId) {
     }
 
     if (msg.type === '_auth_ready') {
-      console.log(`  ${peer.name} authenticated, encrypted channel ready`)
       webUI.broadcastPeers(peerManager.getConnectedPeers())
       return
     }
 
     if (msg.type === '_auth_abort') {
-      console.log(`  Auth aborted by ${peer.name}`)
       webUI.broadcastPeerAuthEvent({ peerId: fromPeerId, peerName: peer.name, type: 'aborted' })
       return
     }
 
     if (!peer.authenticated) {
-      console.log(`  Dropping message from unauthenticated peer ${peer.name} (${fromPeerId})`)
       return
     }
 
@@ -277,15 +244,14 @@ function onMessageReceived(msg, fromPeerId) {
     }
 
     router.handleIncomingMessage(msg, fromPeerId)
-  } catch (err) {
-    console.error(`  Error handling message from ${fromPeerId}: ${err.message}`)
+  } catch {
+    // ignore
   }
 }
 
 function handleIncomingAuthRequest(fromPeerId, fromName) {
   const failures = pinFailures.get(fromPeerId) || 0
   if (failures >= PIN_MAX_ATTEMPTS) {
-    console.log(`  Rate limit: disconnecting ${fromName} (${PIN_MAX_ATTEMPTS} failed PIN attempts)`)
     peerManager.disconnectPeer(fromPeerId)
     return
   }
@@ -295,8 +261,6 @@ function handleIncomingAuthRequest(fromPeerId, fromName) {
   const remotePubKey = peer ? peer.remotePublicKey || '' : ''
 
   pendingPINAuths.set(fromPeerId, { pin, peerName: fromName, createdAt: Date.now(), remotePublicKey: remotePubKey })
-
-  console.log(`  PIN for ${fromName}: check the Web UI`)
 
   webUI.broadcastPeerAuthEvent({
     type: 'pin_required',
@@ -314,7 +278,6 @@ function handleIncomingAuthRequest(fromPeerId, fromName) {
     if (pendingPINAuths.has(fromPeerId)) {
       pendingPINAuths.delete(fromPeerId)
       peerManager.sendToPeer(fromPeerId, { type: '_auth_abort', payload: {} }, { skipAuth: true })
-      console.log(`  PIN auth timed out for ${fromName}`)
     }
   }, PIN_TIMEOUT).unref()
 }
@@ -322,11 +285,9 @@ function handleIncomingAuthRequest(fromPeerId, fromName) {
 function handleIncomingAuthChallenge(msg, fromPeerId) {
   const peer = peerManager.getPeerInfo(fromPeerId)
   if (!peer) {
-    console.log(`  Auth challenge: no peer info for ${fromPeerId}`)
     return
   }
 
-  console.log(`  Auth challenge from ${peer.name} (${fromPeerId}) — showing PIN input`)
   webUI.broadcastPeerAuthEvent({
     type: 'awaiting_pin',
     peerId: fromPeerId,
@@ -337,7 +298,6 @@ function handleIncomingAuthChallenge(msg, fromPeerId) {
 function handleIncomingAuthResponse(msg, fromPeerId) {
   const pending = pendingPINAuths.get(fromPeerId)
   if (!pending) {
-    console.log(`  Auth response from ${fromPeerId}: no pending auth`)
     peerManager.sendToPeer(fromPeerId, {
       type: '_auth_result',
       payload: { success: false, message: 'No pending auth' },
@@ -350,7 +310,6 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
   if (submittedPIN === pending.pin) {
     const peer = peerManager.getPeerInfo(fromPeerId)
     if (!peer) {
-      console.log(`  Auth response: peer ${fromPeerId} gone before verify`)
       return
     }
 
@@ -364,13 +323,10 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
       payload: { success: true, message: 'Authenticated' },
     })
 
-    console.log(`  PIN verified for ${pending.peerName}`)
     notifyAuthReady(fromPeerId, pending.peerName)
   } else {
     const failures = (pinFailures.get(fromPeerId) || 0) + 1
     pinFailures.set(fromPeerId, failures)
-
-    console.log(`  Wrong PIN from ${pending.peerName} (attempt ${failures}/${PIN_MAX_ATTEMPTS})`)
 
     if (failures >= PIN_MAX_ATTEMPTS) {
       pendingPINAuths.delete(fromPeerId)
@@ -402,12 +358,10 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
 
 function handleIncomingAuthResult(msg, fromPeerId, fromName) {
   if (msg.payload.success) {
-    console.log(`  ${fromName} authenticated us`)
     peerManager.markAuthenticated(fromPeerId)
     resetBackoff(fromPeerId)
     notifyAuthReady(fromPeerId, fromName)
   } else {
-    console.log(`  Auth rejected by ${fromName}: ${msg.payload.message || ''}`)
     webUI.broadcastPeerAuthEvent({
       type: 'auth_failed',
       peerId: fromPeerId,
@@ -447,7 +401,6 @@ function onPINSubmit(data) {
 }
 
 function onPeerDisconnected(peerId) {
-  console.log(`  Disconnected: ${peerId}`)
   pendingPINAuths.delete(peerId)
 
   const backoff = reconnectBackoff.get(peerId)
@@ -461,8 +414,6 @@ function onPeerDisconnected(peerId) {
   }
   reconnectBackoff.set(peerId, { delay, nextAttempt: Date.now() + delay })
 
-  console.log(`  Reconnect backoff: ${peerId}, next attempt in ${delay}ms`)
-
   webUI.broadcastPeers(peerManager.getConnectedPeers())
 }
 
@@ -471,7 +422,6 @@ function onAppMessage(msg) {
 }
 
 process.on('SIGINT', () => {
-  console.log('\n  Shutting down...')
   discovery.stop()
   peerManager.stop()
   webUI.stop()
@@ -487,7 +437,6 @@ process.on('SIGTERM', () => {
   process.exit(0)
 })
 
-main().catch((err) => {
-  console.error('Failed to start:', err)
+main().catch(() => {
   process.exit(1)
 })

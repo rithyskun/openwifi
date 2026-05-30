@@ -302,6 +302,13 @@ body {
   text-align: right;
 }
 
+.speed-text {
+  font-size: 11px;
+  color: #66b3ff;
+  margin-left: 6px;
+  min-width: 70px;
+}
+
 .send-status {
   font-size: 11px;
   color: #8899aa;

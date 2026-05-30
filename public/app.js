@@ -165,12 +165,24 @@ function updateSendStatus(event) {
       const statusEl = div.querySelector('.send-status')
       if (statusEl) statusEl.textContent = 'Sending...'
     }
+    const send = activeSends.get(event.transferId)
+    if (send) {
+      send.startTime = Date.now()
+      send.bytesAcked = 0
+    }
     startSendingChunks(event.transferId)
   } else if (event.status === 'complete') {
     const div = document.getElementById(`file-sending-${event.transferId}`)
     if (div) {
       const statusEl = div.querySelector('.send-status')
       if (statusEl) statusEl.textContent = 'Sent'
+    }
+    const send = activeSends.get(event.transferId)
+    if (send) {
+      const elapsedSec = (Date.now() - (send.startTime || Date.now())) / 1000
+      const avgSpeed = elapsedSec > 0 ? send.file.size / elapsedSec : 0
+      const speedEl = document.getElementById(`send-speed-${event.transferId}`)
+      if (speedEl) speedEl.textContent = `Avg: ${formatSpeed(avgSpeed)}`
     }
     activeSends.delete(event.transferId)
   } else if (event.status === 'error') {
@@ -190,12 +202,34 @@ function updateSendStatus(event) {
   }
 }
 
+function formatSpeed(bytesPerSec) {
+  if (!bytesPerSec || bytesPerSec < 1) return ''
+  if (bytesPerSec >= 1048576) return `${(bytesPerSec / 1048576).toFixed(1)} MB/s`
+  if (bytesPerSec >= 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
+  return `${Math.round(bytesPerSec)} B/s`
+}
+
 function updateSendProgress(event) {
-  const pct = Math.round(((event.index + 1) / event.total) * 100)
+  const send = activeSends.get(event.transferId)
+  if (!send) return
+  if (!send.startTime) {
+    send.startTime = Date.now()
+    send.bytesAcked = 0
+  }
+  const chunkSize = send.chunkSize || CHUNK_SIZE
+  send.bytesAcked = (event.index + 1) * chunkSize
+  if (send.bytesAcked > send.file.size) send.bytesAcked = send.file.size
+
+  const elapsedSec = (Date.now() - send.startTime) / 1000
+  const speed = elapsedSec > 0 ? send.bytesAcked / elapsedSec : 0
+
+  const pct = Math.round((send.bytesAcked / send.file.size) * 100)
   const fill = document.getElementById(`send-fill-${event.transferId}`)
   const text = document.getElementById(`send-text-${event.transferId}`)
+  const speedEl = document.getElementById(`send-speed-${event.transferId}`)
   if (fill) fill.style.width = pct + '%'
   if (text) text.textContent = pct + '%'
+  if (speedEl) speedEl.textContent = formatSpeed(speed)
 }
 
 const pendingChunks = new Map()
@@ -317,7 +351,6 @@ function sendChunkToServer(transferId, index) {
 }
 
 function handleAuthEvent(event) {
-  console.log('[auth]', event.type, event.peerId, event.peerName)
   if (event.type === 'pin_required') {
     showPINRequired(event.peerId, event.peerName, event.pin)
   } else if (event.type === 'awaiting_pin') {
@@ -492,6 +525,7 @@ function renderOutgoingFile(transferId, fileName, fileSize) {
       <div class="progress-fill" id="send-fill-${transferId}" style="width:0%"></div>
     </div>
     <span class="progress-text" id="send-text-${transferId}">0%</span>
+    <span class="speed-text" id="send-speed-${transferId}"></span>
   `
   div.appendChild(progressContainer)
 
