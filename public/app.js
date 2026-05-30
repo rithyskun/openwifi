@@ -15,6 +15,14 @@ const selfInfoEl = document.getElementById('self-info')
 const pinModal = document.getElementById('pin-modal')
 const pinModalBody = document.getElementById('pin-modal-body')
 
+const aiMessagesEl = document.getElementById('ai-messages')
+const aiInput = document.getElementById('ai-input')
+const aiSendBtn = document.getElementById('ai-send-btn')
+const sidebarTabs = document.querySelectorAll('.sidebar-tab')
+const sidebarPanels = document.querySelectorAll('.sidebar-panel')
+
+let aiChatHistory = []
+
 const CHUNK_SIZE = 1048576
 const PIPELINE_DEPTH = 8
 const activeSends = new Map()
@@ -639,3 +647,86 @@ function escapeHtml(str) {
   div.textContent = str
   return div.innerHTML
 }
+
+function switchSidebarTab(tabName) {
+  for (const tab of sidebarTabs) {
+    tab.classList.toggle('active', tab.dataset.tab === tabName)
+  }
+  for (const panel of sidebarPanels) {
+    panel.classList.toggle('active', panel.id === `${tabName}-section`)
+  }
+}
+
+for (const tab of sidebarTabs) {
+  tab.addEventListener('click', () => switchSidebarTab(tab.dataset.tab))
+}
+
+function appendAIMessage(role, text) {
+  const div = document.createElement('div')
+  div.className = `ai-message ${role}`
+  const content = document.createElement('div')
+  content.className = 'ai-message-content'
+  content.textContent = text
+  div.appendChild(content)
+  aiMessagesEl.appendChild(div)
+  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight
+}
+
+function appendAILoading() {
+  const div = document.createElement('div')
+  div.className = 'ai-message assistant loading'
+  div.id = 'ai-loading'
+  div.innerHTML = '<div class="ai-message-content"><span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span></div>'
+  aiMessagesEl.appendChild(div)
+  aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight
+}
+
+function removeAILoading() {
+  const el = document.getElementById('ai-loading')
+  if (el) el.remove()
+}
+
+async function sendAIMessage() {
+  const text = aiInput.value.trim()
+  if (!text) return
+  aiInput.value = ''
+  aiInput.disabled = true
+  aiSendBtn.disabled = true
+
+  aiChatHistory.push({ role: 'user', content: text })
+  appendAIMessage('user', text)
+  appendAILoading()
+
+  try {
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: aiChatHistory }),
+    })
+    removeAILoading()
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Request failed' }))
+      appendAIMessage('error', err.error || 'Error')
+    } else {
+      const data = await res.json()
+      const reply = data.response || '(no response)'
+      aiChatHistory.push({ role: 'assistant', content: reply })
+      appendAIMessage('assistant', reply)
+    }
+  } catch (err) {
+    removeAILoading()
+    appendAIMessage('error', `LM Studio unreachable: ${err.message}`)
+  }
+
+  aiInput.disabled = false
+  aiSendBtn.disabled = false
+  aiInput.focus()
+}
+
+aiSendBtn.addEventListener('click', sendAIMessage)
+aiInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    sendAIMessage()
+  }
+})

@@ -110,6 +110,62 @@ function createWebUI(peerInfo) {
 
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }))
 
+  const AI_RATE_LIMIT_WINDOW = 60 * 1000
+  const AI_RATE_LIMIT_MAX = 30
+  const aiLimits = new Map()
+
+  function checkAIRateLimit(clientId) {
+    const now = Date.now()
+    let entry = aiLimits.get(clientId)
+    if (!entry) {
+      entry = { count: 1, resetAt: now + AI_RATE_LIMIT_WINDOW }
+      aiLimits.set(clientId, entry)
+      return true
+    }
+    if (now > entry.resetAt) {
+      entry.count = 1
+      entry.resetAt = now + AI_RATE_LIMIT_WINDOW
+      return true
+    }
+    entry.count++
+    return entry.count <= AI_RATE_LIMIT_MAX
+  }
+
+  app.post('/api/ai/chat', express.json({ limit: '256kb' }), async (req, res) => {
+    if (!checkAIRateLimit(req.ip || 'unknown')) {
+      res.status(429).json({ error: 'Rate limit exceeded' })
+      return
+    }
+    const body = req.body
+    if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
+      res.status(400).json({ error: 'Invalid request' })
+      return
+    }
+    try {
+      const response = await fetch('http://localhost:1234/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: body.model || 'qwen2.5-coder-14b',
+          messages: body.messages,
+          temperature: typeof body.temperature === 'number' ? body.temperature : 0.7,
+          max_tokens: typeof body.max_tokens === 'number' ? body.max_tokens : 2048,
+          stream: false,
+        }),
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        res.status(502).json({ error: `LM Studio error: ${text}` })
+        return
+      }
+      const data = await response.json()
+      const content = data.choices?.[0]?.message?.content || ''
+      res.json({ response: content })
+    } catch (err) {
+      res.status(503).json({ error: `LM Studio unreachable: ${err.message}` })
+    }
+  })
+
   app.get('/download/:transferId', downloadLimiter, (req, res) => {
     const dl = peerInfo.getFileDownloadInfo(req.params.transferId)
     if (!dl || dl.status !== 'complete') {
