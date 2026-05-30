@@ -297,6 +297,18 @@ function createWebUI(peerInfo) {
         peerInfo.onConnectPeer(data.peerId)
       }
     })
+
+    socket.on('ai-request', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
+      if (!data || !data.to || typeof data.to !== 'string') return
+      if (!Array.isArray(data.messages) || data.messages.length === 0) return
+      if (typeof data.requestId !== 'string' || !data.requestId) return
+      peerInfo.sendMessage(data.to, {
+        type: 'ai-request',
+        requestId: data.requestId,
+        messages: data.messages,
+      })
+    })
   })
 
   function start(portToUse) {
@@ -334,6 +346,10 @@ function createWebUI(peerInfo) {
     io.emit('file-transfer-event', event)
   }
 
+  function broadcastAIMessage(data) {
+    io.emit('ai-message', data)
+  }
+
   function stop() {
     io.close()
     server.close()
@@ -342,7 +358,7 @@ function createWebUI(peerInfo) {
   return {
     start, stop, getPort: () => port,
     broadcastAppMessage, broadcastPeers, broadcastDiscoveredPeers, broadcastPeerAuthEvent,
-    broadcastFileTransferEvent,
+    broadcastFileTransferEvent, broadcastAIMessage,
   }
 }
 

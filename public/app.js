@@ -18,10 +18,12 @@ const pinModalBody = document.getElementById('pin-modal-body')
 const aiMessagesEl = document.getElementById('ai-messages')
 const aiInput = document.getElementById('ai-input')
 const aiSendBtn = document.getElementById('ai-send-btn')
+const aiTargetSelect = document.getElementById('ai-target-select')
 const sidebarTabs = document.querySelectorAll('.sidebar-tab')
 const sidebarPanels = document.querySelectorAll('.sidebar-panel')
 
 let aiChatHistory = []
+const pendingAIRequests = new Map()
 
 const CHUNK_SIZE = 1048576
 const PIPELINE_DEPTH = 8
@@ -476,6 +478,11 @@ function renderPeerList() {
   targetSelect.innerHTML = ''
   targetSelect.appendChild(broadcastOption)
 
+  const localOption = aiTargetSelect.querySelector('option[value="__local__"]')
+  const aiPrevValue = aiTargetSelect.value
+  aiTargetSelect.innerHTML = ''
+  aiTargetSelect.appendChild(localOption)
+
   if (peers.length === 0) {
     peerListEl.innerHTML = '<li class="discovered-empty">None connected</li>'
   }
@@ -497,8 +504,14 @@ function renderPeerList() {
     option.value = peer.id
     option.textContent = `${peer.name} (direct)`
     targetSelect.appendChild(option)
+
+    const aiOption = document.createElement('option')
+    aiOption.value = peer.id
+    aiOption.textContent = `${peer.name} (mesh)`
+    aiTargetSelect.appendChild(aiOption)
   }
   if (prevValue) targetSelect.value = prevValue
+  if (aiPrevValue) aiTargetSelect.value = aiPrevValue
 }
 
 function renderChatMessage(msg) {
@@ -697,31 +710,53 @@ async function sendAIMessage() {
   appendAIMessage('user', text)
   appendAILoading()
 
-  try {
-    const res = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: aiChatHistory }),
-    })
-    removeAILoading()
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Request failed' }))
-      appendAIMessage('error', err.error || 'Error')
-    } else {
-      const data = await res.json()
-      const reply = data.response || '(no response)'
-      aiChatHistory.push({ role: 'assistant', content: reply })
-      appendAIMessage('assistant', reply)
+  const target = aiTargetSelect.value
+  if (target === '__local__') {
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: aiChatHistory }),
+      })
+      removeAILoading()
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Request failed' }))
+        appendAIMessage('error', err.error || 'Error')
+      } else {
+        const data = await res.json()
+        const reply = data.response || '(no response)'
+        aiChatHistory.push({ role: 'assistant', content: reply })
+        appendAIMessage('assistant', reply)
+      }
+    } catch (err) {
+      removeAILoading()
+      appendAIMessage('error', `LM Studio unreachable: ${err.message}`)
     }
-  } catch (err) {
-    removeAILoading()
-    appendAIMessage('error', `LM Studio unreachable: ${err.message}`)
+  } else {
+    const requestId = `${selfInfo.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    pendingAIRequests.set(requestId, { messages: [...aiChatHistory] })
+    socket.emit('ai-request', { to: target, requestId, messages: aiChatHistory })
   }
 
   aiInput.disabled = false
   aiSendBtn.disabled = false
   aiInput.focus()
 }
+
+socket.on('ai-message', (data) => {
+  if (!data || typeof data.requestId !== 'string') return
+  const pending = pendingAIRequests.get(data.requestId)
+  if (!pending) return
+  pendingAIRequests.delete(data.requestId)
+  removeAILoading()
+  if (data.error) {
+    appendAIMessage('error', data.error)
+  } else {
+    const reply = data.response || '(no response)'
+    aiChatHistory.push({ role: 'assistant', content: reply })
+    appendAIMessage('assistant', reply)
+  }
+})
 
 aiSendBtn.addEventListener('click', sendAIMessage)
 aiInput.addEventListener('keydown', (e) => {

@@ -477,11 +477,32 @@ body {
 }
 
 #ai-input-area {
-  display: flex;
-  gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid #0f3460;
   background: #16213e;
+}
+
+#ai-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+#ai-target-select {
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: #c0c8d0;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  min-width: 100px;
+  cursor: pointer;
+}
+
+#ai-target-select:focus {
+  border-color: #1a5276;
 }
 
 #ai-input {

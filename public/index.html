@@ -26,8 +26,13 @@
       <div id="ai-section" class="sidebar-panel">
         <div id="ai-messages"></div>
         <div id="ai-input-area">
-          <textarea id="ai-input" placeholder="Ask Qwen..." rows="2"></textarea>
-          <button id="ai-send-btn">Ask</button>
+          <div id="ai-input-row">
+            <select id="ai-target-select">
+              <option value="__local__">Local</option>
+            </select>
+            <textarea id="ai-input" placeholder="Ask Qwen..." rows="2"></textarea>
+            <button id="ai-send-btn">Ask</button>
+          </div>
         </div>
       </div>
     </aside>

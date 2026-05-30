@@ -251,9 +251,63 @@ function onMessageReceived(msg, fromPeerId) {
       return
     }
 
+    if (msg.type === 'ai-request') {
+      handleAIRequest(msg, fromPeerId)
+      return
+    }
+
+    if (msg.type === 'ai-response') {
+      webUI.broadcastAIMessage({
+        requestId: msg.requestId,
+        response: msg.response,
+        error: msg.error,
+        from: msg.from,
+        fromName: msg.fromName,
+      })
+      return
+    }
+
     router.handleIncomingMessage(msg, fromPeerId)
   } catch {
     // ignore
+  }
+}
+
+async function handleAIRequest(msg, fromPeerId) {
+  const requestId = msg.requestId
+  const messages = msg.messages
+  if (!requestId || !Array.isArray(messages) || messages.length === 0) {
+    peerManager.sendToPeer(fromPeerId, { type: 'ai-response', requestId, error: 'Invalid request' })
+    return
+  }
+  try {
+    const response = await fetch('http://localhost:1234/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'qwen2.5-coder-14b',
+        messages,
+        temperature: 0.7,
+        max_tokens: 2048,
+        stream: false,
+      }),
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      peerManager.sendToPeer(fromPeerId, { type: 'ai-response', requestId, error: `LM Studio error: ${text}` })
+      return
+    }
+    const data = await response.json()
+    const content = data.choices?.[0]?.message?.content || ''
+    peerManager.sendToPeer(fromPeerId, {
+      type: 'ai-response',
+      requestId,
+      response: content,
+      from: peerId,
+      fromName: peerName,
+    })
+  } catch (err) {
+    peerManager.sendToPeer(fromPeerId, { type: 'ai-response', requestId, error: `LM Studio unreachable: ${err.message}` })
   }
 }
 
