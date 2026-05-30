@@ -169,11 +169,13 @@ openwifi/
 │   ├── peer-manager.js  # TCP connections, encryption layer
 │   ├── router.js        # Mesh message flooding
 │   ├── web-ui.js        # Express + Socket.IO server
-│   └── vault.js         # PBKDF2 + AES-256-GCM data-at-rest encryption
+│   ├── vault.js         # PBKDF2 + AES-256-GCM data-at-rest encryption
+│   └── file-transfer.js # Chunked file streaming over direct P2P
 ├── test/
 │   ├── crypto.test.js   # 27 tests — ECDH, AES, tamper detection
 │   ├── vault.test.js    # 19 tests — PBKDF2, encrypt/decrypt, seal/unseal
-│   └── db.test.js       # 20 tests — plaintext + vault mode
+│   ├── db.test.js       # 20 tests — plaintext + vault mode
+│   └── file-transfer.test.js # 16 tests — announce, chunk, accept, cancel
 └── public/
     ├── index.html       # Web UI layout
     ├── app.js           # Frontend logic

@@ -207,20 +207,93 @@ body {
   color: #8899aa;
 }
 
-.message .file-info .download-btn {
-  margin-top: 6px;
-  padding: 4px 12px;
+.download-btn {
+  padding: 6px 14px;
   border: 1px solid #e94560;
   color: #e94560;
   border-radius: 4px;
   background: transparent;
   cursor: pointer;
   font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s;
+  display: inline-block;
 }
 
-.message .file-info .download-btn:hover {
+.download-btn:hover {
   background: #e94560;
   color: #fff;
+}
+
+.download-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.decline-btn {
+  padding: 6px 14px;
+  border: 1px solid #667788;
+  color: #667788;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s;
+  margin-left: 6px;
+}
+
+.decline-btn:hover {
+  background: #667788;
+  color: #fff;
+}
+
+.decline-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-actions {
+  margin-top: 8px;
+}
+
+.progress-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.progress-container.hidden {
+  display: none;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: #1a1a3e;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #2ecc71;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 11px;
+  color: #8899aa;
+  min-width: 36px;
+  text-align: right;
+}
+
+.send-status {
+  font-size: 11px;
+  color: #8899aa;
+  margin-top: 6px;
 }
 
 #input-area {

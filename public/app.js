@@ -13,6 +13,9 @@ const selfInfoEl = document.getElementById('self-info')
 const pinModal = document.getElementById('pin-modal')
 const pinModalBody = document.getElementById('pin-modal-body')
 
+const CHUNK_SIZE = 65536
+const activeSends = new Map()
+
 socket.on('self-info', (info) => {
   selfInfo = info
   selfInfoEl.innerHTML = `<strong>${info.name}</strong> <span style="color:#667788">${info.id}</span>`
@@ -27,16 +30,200 @@ socket.on('peer-list', (peerList) => {
 socket.on('app-message', (msg) => {
   if (msg.type === 'chat') {
     renderChatMessage(msg)
-  } else if (msg.type === 'file-announce') {
-    renderFileAnnouncement(msg)
   } else if (msg.type === 'system') {
     addSystemMessage(msg.payload.text)
   }
 })
 
+socket.on('file-transfer-event', (event) => {
+  handleFileTransferEvent(event)
+})
+
 socket.on('peer-auth-event', (event) => {
   handleAuthEvent(event)
 })
+
+function handleFileTransferEvent(event) {
+  if (event.action === 'announce') {
+    renderIncomingFile(event)
+  } else if (event.action === 'progress') {
+    updateDownloadProgress(event)
+  } else if (event.action === 'complete') {
+    completeDownload(event)
+  } else if (event.action === 'error') {
+    addSystemMessage(`File transfer error: ${event.error}`)
+  } else if (event.action === 'send-status') {
+    updateSendStatus(event)
+  } else if (event.action === 'send-progress') {
+    updateSendProgress(event)
+  }
+}
+
+function renderIncomingFile(event) {
+  const div = document.createElement('div')
+  div.className = 'message other'
+  div.id = `file-incoming-${event.transferId}`
+
+  const nameEl = document.createElement('div')
+  nameEl.className = 'msg-sender'
+  nameEl.textContent = event.fromName
+  div.appendChild(nameEl)
+
+  const fileInfo = document.createElement('div')
+  fileInfo.className = 'file-info'
+  fileInfo.innerHTML = `
+    <span class="file-icon">&#128193;</span>
+    <div class="file-details">
+      <span class="file-name">${escapeHtml(event.fileName)}</span>
+      <span class="file-size">${formatSize(event.fileSize)}</span>
+    </div>
+  `
+  div.appendChild(fileInfo)
+
+  const actions = document.createElement('div')
+  actions.className = 'file-actions'
+  actions.innerHTML = `
+    <button class="download-btn accept-btn">Download</button>
+    <button class="decline-btn">Decline</button>
+  `
+  div.appendChild(actions)
+
+  const progressContainer = document.createElement('div')
+  progressContainer.className = 'progress-container hidden'
+  progressContainer.id = `progress-${event.transferId}`
+  progressContainer.innerHTML = `
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress-fill-${event.transferId}" style="width:0%"></div>
+    </div>
+    <span class="progress-text" id="progress-text-${event.transferId}">0%</span>
+  `
+  div.appendChild(progressContainer)
+
+  const timeEl = document.createElement('div')
+  timeEl.className = 'msg-time'
+  timeEl.textContent = new Date().toLocaleTimeString()
+  div.appendChild(timeEl)
+
+  messagesEl.appendChild(div)
+  messagesEl.scrollTop = messagesEl.scrollHeight
+
+  const acceptBtn = actions.querySelector('.accept-btn')
+  const declineBtn = actions.querySelector('.decline-btn')
+
+  acceptBtn.addEventListener('click', () => {
+    acceptBtn.disabled = true
+    declineBtn.disabled = true
+    acceptBtn.textContent = 'Downloading...'
+    socket.emit('file-transfer-accept', { transferId: event.transferId })
+    progressContainer.classList.remove('hidden')
+  })
+
+  declineBtn.addEventListener('click', () => {
+    socket.emit('file-transfer-cancel', { transferId: event.transferId })
+    div.querySelector('.file-actions').innerHTML = '<span style="color:#667788;font-size:12px">Declined</span>'
+  })
+}
+
+function updateDownloadProgress(event) {
+  const pct = Math.round((event.received / event.total) * 100)
+  const fill = document.getElementById(`progress-fill-${event.transferId}`)
+  const text = document.getElementById(`progress-text-${event.transferId}`)
+  if (fill) fill.style.width = pct + '%'
+  if (text) text.textContent = pct + '%'
+}
+
+function completeDownload(event) {
+  const container = document.getElementById(`file-incoming-${event.transferId}`)
+  if (!container) return
+
+  const progressContainer = document.getElementById(`progress-${event.transferId}`)
+  if (progressContainer) {
+    progressContainer.querySelector('.progress-fill').style.width = '100%'
+    progressContainer.querySelector('.progress-text').textContent = '100%'
+  }
+
+  const actions = container.querySelector('.file-actions')
+  if (actions) {
+    actions.innerHTML = `<a href="/download/${event.transferId}" class="download-btn" style="text-decoration:none">Save File</a>`
+  }
+}
+
+function updateSendStatus(event) {
+  if (event.status === 'waiting') {
+    const div = document.getElementById(`file-sending-${event.transferId}`)
+    if (div) {
+      const statusEl = div.querySelector('.send-status')
+      if (statusEl) statusEl.textContent = 'Waiting for peer to accept...'
+    }
+  } else if (event.status === 'sending') {
+    const div = document.getElementById(`file-sending-${event.transferId}`)
+    if (div) {
+      const statusEl = div.querySelector('.send-status')
+      if (statusEl) statusEl.textContent = 'Sending...'
+    }
+    startSendingChunks(event.transferId)
+  } else if (event.status === 'complete') {
+    const div = document.getElementById(`file-sending-${event.transferId}`)
+    if (div) {
+      const statusEl = div.querySelector('.send-status')
+      if (statusEl) statusEl.textContent = 'Sent'
+    }
+    activeSends.delete(event.transferId)
+  } else if (event.status === 'error') {
+    const div = document.getElementById(`file-sending-${event.transferId}`)
+    if (div) {
+      const statusEl = div.querySelector('.send-status')
+      if (statusEl) { statusEl.textContent = event.error; statusEl.style.color = '#e94560' }
+    }
+    activeSends.delete(event.transferId)
+  } else if (event.status === 'cancelled') {
+    const div = document.getElementById(`file-sending-${event.transferId}`)
+    if (div) {
+      const statusEl = div.querySelector('.send-status')
+      if (statusEl) statusEl.textContent = 'Cancelled'
+    }
+    activeSends.delete(event.transferId)
+  }
+}
+
+function updateSendProgress(event) {
+  const pct = Math.round(((event.index + 1) / event.total) * 100)
+  const fill = document.getElementById(`send-fill-${event.transferId}`)
+  const text = document.getElementById(`send-text-${event.transferId}`)
+  if (fill) fill.style.width = pct + '%'
+  if (text) text.textContent = pct + '%'
+}
+
+function startSendingChunks(transferId) {
+  const send = activeSends.get(transferId)
+  if (!send) return
+
+  const { file, chunkSize } = send
+  const totalChunks = Math.ceil(file.size / chunkSize)
+  let index = 0
+
+  function sendNextChunk() {
+    if (index >= totalChunks) {
+      socket.emit('file-transfer-end', { transferId })
+      return
+    }
+
+    const start = index * chunkSize
+    const end = Math.min(start + chunkSize, file.size)
+    const blob = file.slice(start, end)
+
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const base64 = e.target.result.split(',')[1]
+      socket.emit('file-chunk-upload', { transferId, index, data: base64 })
+      index++
+      setTimeout(sendNextChunk, 0)
+    }
+    reader.readAsDataURL(blob)
+  }
+
+  sendNextChunk()
+}
 
 function handleAuthEvent(event) {
   if (event.type === 'pin_required') {
@@ -121,6 +308,7 @@ function renderPeerList() {
   peerCountEl.textContent = peers.length
 
   const broadcastOption = targetSelect.querySelector('option[value="*broadcast*"]')
+  const prevValue = targetSelect.value
   targetSelect.innerHTML = ''
   targetSelect.appendChild(broadcastOption)
 
@@ -142,6 +330,7 @@ function renderPeerList() {
     option.textContent = `${peer.name} (direct)`
     targetSelect.appendChild(option)
   }
+  if (prevValue) targetSelect.value = prevValue
 }
 
 function renderChatMessage(msg) {
@@ -183,41 +372,45 @@ function renderChatMessage(msg) {
   messagesEl.scrollTop = messagesEl.scrollHeight
 }
 
-function renderFileAnnouncement(msg) {
-  const isSelf = msg.from === selfInfo.id
-  if (isSelf) return
-
+function renderOutgoingFile(transferId, fileName, fileSize) {
   const div = document.createElement('div')
-  div.className = 'message other'
+  div.className = 'message self'
+  div.id = `file-sending-${transferId}`
 
-  const sender = msg.fromName || msg.from
-  const nameEl = document.createElement('div')
-  nameEl.className = 'msg-sender'
-  nameEl.textContent = sender
-  div.appendChild(nameEl)
+  const lockEl = document.createElement('span')
+  lockEl.className = 'msg-lock'
+  lockEl.textContent = String.fromCharCode(0x1F512)
+  div.appendChild(lockEl)
 
   const fileInfo = document.createElement('div')
   fileInfo.className = 'file-info'
   fileInfo.innerHTML = `
     <span class="file-icon">&#128193;</span>
     <div class="file-details">
-      <span class="file-name">${escapeHtml(msg.payload.fileName)}</span>
-      <span class="file-size">${formatSize(msg.payload.fileSize)}</span>
+      <span class="file-name">${escapeHtml(fileName)}</span>
+      <span class="file-size">${formatSize(fileSize)}</span>
     </div>
   `
   div.appendChild(fileInfo)
 
-  const dlBtn = document.createElement('button')
-  dlBtn.className = 'download-btn'
-  dlBtn.textContent = 'Download'
-  dlBtn.addEventListener('click', () => {
-    downloadFile(msg.payload.fileData, msg.payload.fileName)
-  })
-  div.appendChild(dlBtn)
+  const progressContainer = document.createElement('div')
+  progressContainer.className = 'progress-container'
+  progressContainer.innerHTML = `
+    <div class="progress-bar">
+      <div class="progress-fill" id="send-fill-${transferId}" style="width:0%"></div>
+    </div>
+    <span class="progress-text" id="send-text-${transferId}">0%</span>
+  `
+  div.appendChild(progressContainer)
+
+  const statusEl = document.createElement('div')
+  statusEl.className = 'send-status'
+  statusEl.textContent = 'Waiting for peer to accept...'
+  div.appendChild(statusEl)
 
   const timeEl = document.createElement('div')
   timeEl.className = 'msg-time'
-  timeEl.textContent = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''
+  timeEl.textContent = new Date().toLocaleTimeString()
   div.appendChild(timeEl)
 
   messagesEl.appendChild(div)
@@ -252,37 +445,27 @@ fileInput.addEventListener('change', () => {
   if (!file) return
 
   const target = targetSelect.value
-
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    const base64 = e.target.result.split(',')[1]
-    socket.emit('send-file', {
-      to: target,
-      fileName: file.name,
-      fileSize: file.size,
-      fileData: base64,
-    })
-    addSystemMessage(`Sent file: ${file.name} (${formatSize(file.size)})`)
+  if (target === '*broadcast*') {
+    addSystemMessage('Cannot send files in broadcast mode. Select a specific peer.')
+    fileInput.value = ''
+    return
   }
-  reader.readAsDataURL(file)
+
+  const transferId = `${selfInfo.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+  activeSends.set(transferId, { file, chunkSize: CHUNK_SIZE })
+
+  renderOutgoingFile(transferId, file.name, file.size)
+
+  socket.emit('file-transfer-start', {
+    transferId,
+    fileName: file.name,
+    fileSize: file.size,
+    to: target,
+  })
+
   fileInput.value = ''
 })
-
-function downloadFile(base64Data, fileName) {
-  const byteCharacters = atob(base64Data)
-  const byteNumbers = new Array(byteCharacters.length)
-  for (let i = 0; i < byteCharacters.length; i++) {
-    byteNumbers[i] = byteCharacters.charCodeAt(i)
-  }
-  const byteArray = new Uint8Array(byteNumbers)
-  const blob = new Blob([byteArray])
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileName
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B'

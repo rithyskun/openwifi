@@ -8,6 +8,7 @@ const { createDiscovery } = require('./discovery')
 const { createPeerManager } = require('./peer-manager')
 const { createRouter } = require('./router')
 const { createWebUI } = require('./web-ui')
+const { FileTransferManager } = require('./file-transfer')
 
 const args = process.argv.slice(2)
 let nameIndex = args.indexOf('--name')
@@ -72,12 +73,58 @@ const router = createRouter(
   peerManager
 )
 
+const fileTransfer = new FileTransferManager(peerManager)
+
+fileTransfer.on('download-announce', (info) => {
+  webUI.broadcastFileTransferEvent({ ...info, action: 'announce' })
+})
+
+fileTransfer.on('download-progress', (info) => {
+  webUI.broadcastFileTransferEvent({ ...info, action: 'progress' })
+})
+
+fileTransfer.on('download-complete', (info) => {
+  webUI.broadcastFileTransferEvent({ ...info, action: 'complete' })
+})
+
+fileTransfer.on('download-error', (info) => {
+  webUI.broadcastFileTransferEvent({ ...info, action: 'error' })
+})
+
+fileTransfer.on('send-status', (info) => {
+  webUI.broadcastFileTransferEvent({ ...info, action: 'send-status' })
+  if (info.status === 'error') {
+    console.log(`  File transfer error: ${info.error}`)
+  }
+})
+
+fileTransfer.on('send-progress', (info) => {
+  webUI.broadcastFileTransferEvent({ ...info, action: 'send-progress' })
+})
+
 const webUI = createWebUI({
   id: peerId,
   name: peerName,
   getPeers: () => peerManager.getConnectedPeers(),
   sendMessage: (to, payload) => router.sendMessage(to, payload),
   onPINSubmit,
+  onFileTransferStart: ({ transferId, fileName, fileSize, to }) => {
+    fileTransfer.startTransfer(transferId, fileName, fileSize, to)
+  },
+  onFileChunkUpload: ({ transferId, index, data }) => {
+    fileTransfer.sendChunk(transferId, index, data)
+  },
+  onFileTransferEnd: ({ transferId }) => {
+    fileTransfer.endTransfer(transferId)
+  },
+  onFileTransferAccept: ({ transferId }) => {
+    fileTransfer.acceptDownload(transferId)
+  },
+  onFileTransferCancel: ({ transferId }) => {
+    fileTransfer.cancelTransfer(transferId)
+  },
+  getFileDownloadPath: (transferId) => fileTransfer.getDownloadPath(transferId),
+  getFileDownloadInfo: (transferId) => fileTransfer.getDownloadInfo(transferId),
 })
 
 async function main() {
@@ -164,6 +211,11 @@ function onMessageReceived(msg, fromPeerId) {
   if (msg.type === '_auth_abort') {
     console.log(`  Auth aborted by ${peer.name}`)
     webUI.broadcastPeerAuthEvent({ peerId: fromPeerId, peerName: peer.name, type: 'aborted' })
+    return
+  }
+
+  if (msg.type === 'file-transfer') {
+    fileTransfer.handleP2PMessage(msg, fromPeerId)
     return
   }
 
