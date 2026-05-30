@@ -1,5 +1,6 @@
 const net = require('net')
 const { encrypt, decrypt, deriveSharedSecret } = require('./crypto')
+const { KEEPALIVE_INTERVAL } = require('./config')
 
 function createPeerManager(peerInfo) {
   const peers = new Map()
@@ -73,6 +74,7 @@ function createPeerManager(peerInfo) {
   }
 
   function attachSocketHandlers(socket, isOutgoing) {
+    socket.setKeepAlive(true, KEEPALIVE_INTERVAL)
     let buffer = Buffer.alloc(0)
     let messageLength = null
     let handshakeDone = false
@@ -97,6 +99,10 @@ function createPeerManager(peerInfo) {
         if (!wireMsg) continue
 
         if (wireMsg.type === 'handshake') {
+          if (!wireMsg.from || !/^[a-f0-9]{8}$/i.test(wireMsg.from)) {
+            socket.destroy()
+            return
+          }
           remotePeerId = wireMsg.from
           remoteName = wireMsg.fromName || remotePeerId
           remotePublicKey = wireMsg.publicKey || null
@@ -116,6 +122,7 @@ function createPeerManager(peerInfo) {
             name: remoteName,
             socket,
             sharedKey,
+            remotePublicKey,
             handshakeDone: true,
           })
 
@@ -227,6 +234,14 @@ function createPeerManager(peerInfo) {
     return peers.get(peerId) || null
   }
 
+  function disconnectPeer(peerId) {
+    const peer = peers.get(peerId)
+    if (peer && peer.socket && !peer.socket.destroyed) {
+      peer.socket.destroy()
+    }
+    peers.delete(peerId)
+  }
+
   function stop() {
     pendingConnections.clear()
     for (const [, peer] of peers) {
@@ -249,6 +264,7 @@ function createPeerManager(peerInfo) {
     getConnectedPeers,
     getPeerInfo,
     isConnected,
+    disconnectPeer,
     stop,
   }
 }

@@ -2,16 +2,28 @@ const express = require('express')
 const path = require('path')
 const http = require('http')
 const { Server } = require('socket.io')
+const helmet = require('helmet')
+const { MAX_MESSAGE_LENGTH, MAX_FILE_NAME_LENGTH, MAX_FILE_SIZE } = require('./config')
 
 function createWebUI(peerInfo) {
   const app = express()
   const server = http.createServer(app)
   const io = new Server(server, {
-    maxHttpBufferSize: 10 * 1024 * 1024,
+    maxHttpBufferSize: MAX_FILE_SIZE + 1024 * 1024,
   })
   let port = null
 
-  app.use(express.static(path.join(__dirname, '..', 'public')))
+  app.use(helmet({ contentSecurityPolicy: false }))
+
+  const htmlPath = path.join(__dirname, '..', 'public', 'index.html')
+  app.get('/', (req, res) => {
+    const fs = require('fs')
+    let html = fs.readFileSync(htmlPath, 'utf8')
+    html = html.replace('</head>', `<script>window.__WS_TOKEN__="${peerInfo.wsToken}"</script></head>`)
+    res.type('html').send(html)
+  })
+
+  app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }))
 
   app.get('/download/:transferId', (req, res) => {
     const dl = peerInfo.getFileDownloadInfo(req.params.transferId)
@@ -24,7 +36,16 @@ function createWebUI(peerInfo) {
       res.status(404).json({ error: 'File not found on disk' })
       return
     }
-    res.download(filePath, dl.fileName)
+    const safeName = dl.fileName.replace(/[/\\:*?"<>|]/g, '_').slice(0, 255) || 'download'
+    res.download(filePath, safeName)
+  })
+
+  io.use((socket, next) => {
+    if (socket.handshake.auth && socket.handshake.auth.token === peerInfo.wsToken) {
+      next()
+    } else {
+      next(new Error('Authentication error'))
+    }
   })
 
   io.on('connection', (socket) => {
@@ -36,6 +57,8 @@ function createWebUI(peerInfo) {
     socket.emit('peer-list', peerInfo.getPeers())
 
     socket.on('send-message', (data) => {
+      if (!data || typeof data.text !== 'string' || data.text.length > MAX_MESSAGE_LENGTH) return
+      if (typeof data.to !== 'undefined' && typeof data.to !== 'string') return
       const target = data.to || '*broadcast*'
       peerInfo.sendMessage(target, {
         type: 'chat',
@@ -44,26 +67,38 @@ function createWebUI(peerInfo) {
     })
 
     socket.on('file-transfer-start', (data) => {
+      if (!data || typeof data.fileName !== 'string' || !data.fileName) return
+      if (data.fileName.length > MAX_FILE_NAME_LENGTH) return
+      if (typeof data.fileSize !== 'number' || data.fileSize <= 0 || data.fileSize > MAX_FILE_SIZE) return
+      if (typeof data.to !== 'string' || !data.to) return
+      if (typeof data.transferId !== 'string' || !data.transferId) return
       peerInfo.onFileTransferStart(data)
     })
 
     socket.on('file-chunk-upload', (data) => {
+      if (!data || typeof data.transferId !== 'string' || !data.transferId) return
+      if (typeof data.index !== 'number' || data.index < 0) return
+      if (!data.data || !(data.data instanceof Uint8Array || Buffer.isBuffer(data.data) || typeof data.data === 'string')) return
       peerInfo.onFileChunkUpload(data)
     })
 
     socket.on('file-transfer-end', (data) => {
+      if (!data || typeof data.transferId !== 'string' || !data.transferId) return
       peerInfo.onFileTransferEnd(data)
     })
 
     socket.on('file-transfer-accept', (data) => {
+      if (!data || typeof data.transferId !== 'string' || !data.transferId) return
       peerInfo.onFileTransferAccept(data)
     })
 
     socket.on('file-transfer-cancel', (data) => {
+      if (!data || typeof data.transferId !== 'string' || !data.transferId) return
       peerInfo.onFileTransferCancel(data)
     })
 
     socket.on('pin-submit', (data) => {
+      if (!data || typeof data.peerId !== 'string' || typeof data.pin !== 'string') return
       if (peerInfo.onPINSubmit) {
         peerInfo.onPINSubmit(data)
       }

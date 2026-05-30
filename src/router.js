@@ -1,5 +1,4 @@
-const MAX_TTL = 10
-const DUPLICATE_CACHE_SIZE = 1000
+const { MAX_TTL, DUPLICATE_CACHE_SIZE } = require('./config')
 
 function createRouter(peerInfo, peerManager) {
   const seenMessages = new Set()

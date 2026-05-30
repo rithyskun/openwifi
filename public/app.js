@@ -1,4 +1,4 @@
-const socket = io()
+const socket = io({ auth: { token: window.__WS_TOKEN__ } })
 let selfInfo = null
 let peers = []
 

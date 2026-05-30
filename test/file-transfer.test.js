@@ -401,4 +401,142 @@ describe('FileTransferManager', () => {
 
     try { fs.rmSync(ft7.tempDir, { recursive: true, force: true }) } catch {}
   })
+
+  it('rejects path traversal transferId in announce', () => {
+    const ft8 = new FileTransferManager(createMockPeerManager())
+    ft8.handleP2PMessage(
+      {
+        from: 'attacker',
+        fromName: 'Attacker',
+        payload: {
+          action: 'announce',
+          transferId: '../../../etc/passwd',
+          fileName: 'evil.txt',
+          fileSize: 100,
+          totalChunks: 1,
+          chunkSize: CHUNK_SIZE,
+        },
+      },
+      'attacker'
+    )
+
+    assert.strictEqual(ft8.downloads.has('../../../etc/passwd'), false)
+    assert.strictEqual(ft8.downloads.size, 0)
+
+    try { fs.rmSync(ft8.tempDir, { recursive: true, force: true }) } catch {}
+  })
+
+  it('rejects path traversal transferId in chunk without announce', () => {
+    const ft9 = new FileTransferManager(createMockPeerManager())
+    const maliciousPath = '/tmp/evil_write_test'
+
+    ft9.handleP2PMessage(
+      {
+        payload: {
+          action: 'chunk',
+          transferId: maliciousPath,
+          index: 0,
+          data: Buffer.from('malicious data').toString('base64'),
+        },
+      },
+      'attacker'
+    )
+
+    assert.strictEqual(fs.existsSync(maliciousPath), false)
+
+    try { fs.rmSync(ft9.tempDir, { recursive: true, force: true }) } catch {}
+  })
+
+  it('rejects transferId with special characters', () => {
+    const ft10 = new FileTransferManager(createMockPeerManager())
+    ft10.handleP2PMessage(
+      {
+        from: 'attacker',
+        fromName: 'Attacker',
+        payload: {
+          action: 'announce',
+          transferId: 'valid-id_123',
+          fileName: 'good.txt',
+          fileSize: 50,
+          totalChunks: 1,
+          chunkSize: CHUNK_SIZE,
+        },
+      },
+      'attacker'
+    )
+
+    assert.ok(ft10.downloads.has('valid-id_123'))
+
+    ft10.handleP2PMessage(
+      {
+        from: 'attacker',
+        fromName: 'Attacker',
+        payload: {
+          action: 'announce',
+          transferId: '../injection',
+          fileName: 'bad.txt',
+          fileSize: 50,
+          totalChunks: 1,
+          chunkSize: CHUNK_SIZE,
+        },
+      },
+      'attacker'
+    )
+
+    assert.strictEqual(ft10.downloads.has('../injection'), false)
+
+    try { fs.rmSync(ft10.tempDir, { recursive: true, force: true }) } catch {}
+  })
+
+  it('sanitizeFilename removes dangerous path separators', () => {
+    const ft11 = new FileTransferManager(createMockPeerManager())
+    ft11.handleP2PMessage(
+      {
+        from: 'peer',
+        fromName: 'Peer',
+        payload: {
+          action: 'announce',
+          transferId: 't-safe',
+          fileName: '../../malicious.exe',
+          fileSize: 100,
+          totalChunks: 1,
+          chunkSize: CHUNK_SIZE,
+        },
+      },
+      'peer'
+    )
+
+    const dl = ft11.getDownloadInfo('t-safe')
+    assert.ok(dl.fileName)
+    assert.ok(!dl.fileName.includes('/'))
+    assert.ok(!dl.fileName.includes('\\'))
+    assert.strictEqual(dl.fileName, '.._.._malicious.exe')
+
+    try { fs.rmSync(ft11.tempDir, { recursive: true, force: true }) } catch {}
+  })
+
+  it('getDownloadPath returns null for invalid transferId', () => {
+    const ft12 = new FileTransferManager(createMockPeerManager())
+    assert.strictEqual(ft12.getDownloadPath('../etc/passwd'), null)
+    assert.strictEqual(ft12.getDownloadPath(''), null)
+    assert.strictEqual(ft12.getDownloadPath('/absolute/path'), null)
+    assert.strictEqual(ft12.getDownloadPath('valid-id'), null)
+    assert.strictEqual(ft12.getDownloadInfo('../etc/passwd'), null)
+
+    try { fs.rmSync(ft12.tempDir, { recursive: true, force: true }) } catch {}
+  })
+
+  it('startTransfer rejects path traversal transferId', () => {
+    const mock = createMockPeerManager()
+    const ft13 = new FileTransferManager(mock)
+    let errored = false
+    ft13.on('send-status', (info) => {
+      if (info.status === 'error') errored = true
+    })
+    ft13.startTransfer('../../../etc/crontab', 'evil.sh', 100, 'peer2')
+    assert.ok(errored)
+    assert.strictEqual(ft13.sends.size, 0)
+
+    try { fs.rmSync(ft13.tempDir, { recursive: true, force: true }) } catch {}
+  })
 })

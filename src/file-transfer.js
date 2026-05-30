@@ -3,7 +3,18 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 
-const CHUNK_SIZE = 65536
+const { CHUNK_SIZE, CLEANUP_DELAY, MAX_FILE_NAME_LENGTH } = require('./config')
+
+const VALID_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+
+function isValidTransferId(id) {
+  return typeof id === 'string' && VALID_ID_RE.test(id)
+}
+
+function sanitizeFilename(name) {
+  if (typeof name !== 'string') return 'file'
+  return name.replace(/[/\\:*?"<>|]/g, '_').slice(0, MAX_FILE_NAME_LENGTH) || 'file'
+}
 
 class FileTransferManager extends EventEmitter {
   constructor(peerManager) {
@@ -24,6 +35,11 @@ class FileTransferManager extends EventEmitter {
   }
 
   startTransfer(transferId, fileName, fileSize, toPeerId) {
+    if (!isValidTransferId(transferId)) {
+      this.emit('send-status', { transferId, status: 'error', error: 'Invalid transfer ID' })
+      return
+    }
+
     const totalChunks = Math.ceil(fileSize / CHUNK_SIZE)
 
     if (!this.peerManager.isConnected(toPeerId)) {
@@ -35,7 +51,7 @@ class FileTransferManager extends EventEmitter {
     }
 
     this.sends.set(transferId, {
-      transferId, fileName, fileSize, totalChunks,
+      transferId, fileName: sanitizeFilename(fileName), fileSize, totalChunks,
       toPeerId, status: 'announcing',
     })
 
@@ -53,6 +69,7 @@ class FileTransferManager extends EventEmitter {
   }
 
   sendChunk(transferId, index, data) {
+    if (!isValidTransferId(transferId)) return
     const send = this.sends.get(transferId)
     if (!send) return
 
@@ -65,6 +82,7 @@ class FileTransferManager extends EventEmitter {
   }
 
   endTransfer(transferId) {
+    if (!isValidTransferId(transferId)) return
     const send = this.sends.get(transferId)
     if (!send) return
     send.status = 'complete'
@@ -79,6 +97,7 @@ class FileTransferManager extends EventEmitter {
   }
 
   acceptDownload(transferId) {
+    if (!isValidTransferId(transferId)) return
     const dl = this.downloads.get(transferId)
     if (!dl) return
     dl.status = 'downloading'
@@ -90,6 +109,7 @@ class FileTransferManager extends EventEmitter {
   }
 
   cancelTransfer(transferId) {
+    if (!isValidTransferId(transferId)) return
     const send = this.sends.get(transferId)
     if (send) {
       this.peerManager.sendToPeer(send.toPeerId, {
@@ -110,33 +130,38 @@ class FileTransferManager extends EventEmitter {
   }
 
   getDownloadPath(transferId) {
+    if (!isValidTransferId(transferId)) return null
     const dl = this.downloads.get(transferId)
     return dl ? dl.tempPath : null
   }
 
   getDownloadInfo(transferId) {
+    if (!isValidTransferId(transferId)) return null
     return this.downloads.get(transferId) || null
   }
 
   _handleAnnounce(msg, fromPeerId) {
     const { transferId, fileName, fileSize, totalChunks } = msg.payload
+    if (!isValidTransferId(transferId)) return
     if (this.downloads.has(transferId)) return
 
+    const safeName = sanitizeFilename(fileName)
     const tempPath = path.join(this.tempDir, transferId)
     this.downloads.set(transferId, {
-      transferId, fileName, fileSize, totalChunks,
-      fromPeerId, fromName: msg.fromName,
+      transferId, fileName: safeName, fileSize, totalChunks,
+      fromPeerId, fromName: msg.fromName || 'Unknown',
       tempPath, receivedChunks: 0, status: 'announced',
     })
 
     this.emit('download-announce', {
       transferId, from: msg.from, fromName: msg.fromName,
-      fileName, fileSize, totalChunks,
+      fileName: safeName, fileSize, totalChunks,
     })
   }
 
   _handleAccept(msg, fromPeerId) {
     const { transferId } = msg.payload
+    if (!isValidTransferId(transferId)) return
     const send = this.sends.get(transferId)
     if (!send) return
     send.status = 'sending'
@@ -145,6 +170,7 @@ class FileTransferManager extends EventEmitter {
 
   _handleChunk(msg, fromPeerId) {
     const { transferId, index, data } = msg.payload
+    if (!isValidTransferId(transferId)) return
     const dl = this.downloads.get(transferId)
     if (!dl || dl.fromPeerId !== fromPeerId) return
 
@@ -161,6 +187,7 @@ class FileTransferManager extends EventEmitter {
 
   _handleDone(msg, fromPeerId) {
     const { transferId } = msg.payload
+    if (!isValidTransferId(transferId)) return
     const dl = this.downloads.get(transferId)
     if (!dl || dl.fromPeerId !== fromPeerId) return
 
@@ -169,11 +196,12 @@ class FileTransferManager extends EventEmitter {
       transferId, fileName: dl.fileName, fileSize: dl.fileSize,
     })
 
-    setTimeout(() => this._cleanupDownload(transferId), 300000).unref()
+    setTimeout(() => this._cleanupDownload(transferId), CLEANUP_DELAY).unref()
   }
 
   _handleCancel(msg, fromPeerId) {
     const { transferId } = msg.payload
+    if (!isValidTransferId(transferId)) return
     this._cleanupDownload(transferId)
     this.sends.delete(transferId)
     this.emit('transfer-cancelled', { transferId })

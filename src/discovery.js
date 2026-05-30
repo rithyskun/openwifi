@@ -1,7 +1,7 @@
 const MulticastDNS = require('multicast-dns')
 const os = require('os')
 
-const SERVICE_NAME = '_openwifi._tcp.local'
+const { SERVICE_NAME, BROWSE_INTERVAL } = require('./config')
 
 function getLocalIP() {
   const nets = os.networkInterfaces()
@@ -139,7 +139,7 @@ function createDiscovery(peerInfo) {
     announcing = true
     announce()
     browse()
-    browseInterval = setInterval(browse, 5000)
+    browseInterval = setInterval(browse, BROWSE_INTERVAL)
   }
 
   function stop() {
