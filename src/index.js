@@ -57,8 +57,23 @@ if (secret && !vault) {
 const pendingPINAuths = new Map()
 const pinFailures = new Map()
 const reconnectBackoff = new Map()
+const MAX_BACKOFF_ENTRIES = 256
 
 const wsToken = crypto.randomBytes(16).toString('hex')
+
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, entry] of reconnectBackoff) {
+    if (entry.nextAttempt + RECONNECT_MAX_DELAY < now) {
+      reconnectBackoff.delete(id)
+    }
+  }
+  for (const [id, failures] of pinFailures) {
+    if (failures >= PIN_MAX_ATTEMPTS) {
+      pinFailures.delete(id)
+    }
+  }
+}, 60000).unref()
 
 const discoveryInfo = { id: peerId, name: peerName, tcpPort, webPort, onPeerFound }
 const discovery = createDiscovery(discoveryInfo)
@@ -148,14 +163,17 @@ async function main() {
   console.log(`  ID:     ${peerId}`)
   console.log(`  Name:   ${peerName}`)
   console.log(`  TCP:    ${localIP}:${actualTcpPort}`)
-  console.log(`  Web UI: http://localhost:${actualWebPort}`)
+  console.log(`  Web UI: http://127.0.0.1:${actualWebPort}`)
   console.log(`  DB:     ${dbPath}`)
   console.log(`  Vault:  ${vaultMode}`)
   console.log(`  E2E:    X25519 + AES-256-GCM\n`)
 
   if (!secret) {
     console.log('  ⚠  No --secret provided. Database is NOT encrypted.')
-    console.log('  ⚠  Use --secret "<passphrase>" or OPENWIFI_SECRET to secure your data.\n')
+    console.log('  ⚠  Use OPENWIFI_SECRET env var to secure your data.\n')
+  } else if (secretArg) {
+    console.log('  ⚠  Secret passed via --secret is visible in process list (ps).')
+    console.log('  ⚠  Prefer OPENWIFI_SECRET environment variable instead.\n')
   }
 }
 
@@ -416,6 +434,10 @@ function onPeerDisconnected(peerId) {
   let delay = RECONNECT_BASE_DELAY
   if (backoff) {
     delay = Math.min(backoff.delay * 2, RECONNECT_MAX_DELAY)
+  }
+  if (reconnectBackoff.size >= MAX_BACKOFF_ENTRIES) {
+    const first = reconnectBackoff.keys().next().value
+    reconnectBackoff.delete(first)
   }
   reconnectBackoff.set(peerId, { delay, nextAttempt: Date.now() + delay })
 

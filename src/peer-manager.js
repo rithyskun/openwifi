@@ -2,6 +2,9 @@ const net = require('net')
 const { encrypt, decrypt, deriveSharedSecret } = require('./crypto')
 const { KEEPALIVE_INTERVAL } = require('./config')
 
+const MAX_MESSAGE_SIZE = 16 * 1024 * 1024
+const MAX_BUFFER_SIZE = MAX_MESSAGE_SIZE + 4
+
 function createPeerManager(peerInfo) {
   const peers = new Map()
   const pendingConnections = new Set()
@@ -100,7 +103,12 @@ function createPeerManager(peerInfo) {
       while (true) {
         if (messageLength === null) {
           if (buffer.length < 4) break
-          messageLength = buffer.readUInt32BE(0)
+          const declaredLen = buffer.readUInt32BE(0)
+          if (declaredLen > MAX_MESSAGE_SIZE) {
+            socket.destroy()
+            return
+          }
+          messageLength = declaredLen
           buffer = buffer.slice(4)
         }
         if (buffer.length < messageLength) break
@@ -171,6 +179,10 @@ function createPeerManager(peerInfo) {
     }
 
     socket.on('data', (chunk) => {
+      if (buffer.length + chunk.length > MAX_BUFFER_SIZE) {
+        socket.destroy()
+        return
+      }
       buffer = Buffer.concat([buffer, chunk])
       processBuffer()
     })

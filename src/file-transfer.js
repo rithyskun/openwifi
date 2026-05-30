@@ -3,9 +3,10 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 
-const { CHUNK_SIZE, CLEANUP_DELAY, MAX_FILE_NAME_LENGTH } = require('./config')
+const { CHUNK_SIZE, CLEANUP_DELAY, MAX_FILE_NAME_LENGTH, MAX_FILE_SIZE } = require('./config')
 
 const VALID_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+const MAX_CONCURRENT_DOWNLOADS = 8
 
 function isValidTransferId(id) {
   return typeof id === 'string' && VALID_ID_RE.test(id)
@@ -144,6 +145,11 @@ class FileTransferManager extends EventEmitter {
     const { transferId, fileName, fileSize, totalChunks } = msg.payload
     if (!isValidTransferId(transferId)) return
     if (this.downloads.has(transferId)) return
+    if (this.downloads.size >= MAX_CONCURRENT_DOWNLOADS) {
+      this.emit('download-error', { transferId, error: 'Too many concurrent downloads' })
+      return
+    }
+    if (typeof fileSize !== 'number' || fileSize <= 0 || fileSize > MAX_FILE_SIZE) return
 
     const safeName = sanitizeFilename(fileName)
     const tempPath = path.join(this.tempDir, transferId)
@@ -156,7 +162,7 @@ class FileTransferManager extends EventEmitter {
     this.downloads.set(transferId, {
       transferId, fileName: safeName, fileSize, totalChunks,
       fromPeerId, fromName: msg.fromName || 'Unknown',
-      tempPath, receivedChunks: 0, status: 'announced',
+      tempPath, receivedChunks: 0, receivedBytes: 0, status: 'announced',
       writeStream,
     })
 
@@ -183,8 +189,14 @@ class FileTransferManager extends EventEmitter {
 
     try {
       const buf = Buffer.from(data, 'base64')
+      if (dl.receivedBytes + buf.length > dl.fileSize) {
+        this.emit('download-error', { transferId, error: 'Chunk exceeds announced file size' })
+        this._cleanupDownload(transferId)
+        return
+      }
       const ok = dl.writeStream.write(buf)
       dl.receivedChunks++
+      dl.receivedBytes += buf.length
 
       this.emit('download-progress', {
         transferId, received: dl.receivedChunks, total: dl.totalChunks,

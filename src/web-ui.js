@@ -5,7 +5,34 @@ const fs = require('fs')
 const { Server } = require('socket.io')
 const helmet = require('helmet')
 const rateLimit = require('express-rate-limit')
+const crypto = require('crypto')
 const { MAX_MESSAGE_LENGTH, MAX_FILE_NAME_LENGTH, MAX_FILE_SIZE } = require('./config')
+
+const WS_RATE_LIMIT_WINDOW = 60 * 1000
+const WS_RATE_LIMIT_MAX = 60
+const wsLimits = new Map()
+
+function checkWsRateLimit(socketId) {
+  const now = Date.now()
+  let entry = wsLimits.get(socketId)
+  if (!entry) {
+    entry = { count: 1, resetAt: now + WS_RATE_LIMIT_WINDOW }
+    wsLimits.set(socketId, entry)
+    return true
+  }
+  if (now > entry.resetAt) {
+    entry.count = 1
+    entry.resetAt = now + WS_RATE_LIMIT_WINDOW
+    return true
+  }
+  entry.count++
+  return entry.count <= WS_RATE_LIMIT_MAX
+}
+
+function isValidBase64(str) {
+  if (typeof str !== 'string') return false
+  return /^[A-Za-z0-9+/]*={0,2}$/.test(str) && (str.length % 4 === 0)
+}
 
 function createWebUI(peerInfo) {
   const app = express()
@@ -18,7 +45,18 @@ function createWebUI(peerInfo) {
   app.disable('x-powered-by')
 
   app.use(helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'"],
+        imgSrc: ["'self'", "data:"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    },
     crossOriginEmbedderPolicy: false,
   }))
 
@@ -81,7 +119,12 @@ function createWebUI(peerInfo) {
 
     socket.emit('peer-list', peerInfo.getPeers())
 
+    socket.on('disconnect', () => {
+      wsLimits.delete(socket.id)
+    })
+
     socket.on('send-message', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
       if (!data || typeof data.text !== 'string' || data.text.length > MAX_MESSAGE_LENGTH) return
       if (typeof data.to !== 'undefined' && typeof data.to !== 'string') return
       const target = data.to || '*broadcast*'
@@ -92,6 +135,7 @@ function createWebUI(peerInfo) {
     })
 
     socket.on('file-transfer-start', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
       if (!data || typeof data.fileName !== 'string' || !data.fileName) return
       if (data.fileName.length > MAX_FILE_NAME_LENGTH) return
       if (typeof data.fileSize !== 'number' || data.fileSize <= 0 || data.fileSize > MAX_FILE_SIZE) return
@@ -101,6 +145,7 @@ function createWebUI(peerInfo) {
     })
 
     socket.on('file-chunk-upload', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
       if (!data || typeof data.transferId !== 'string' || !data.transferId) return
       if (typeof data.index !== 'number' || data.index < 0) return
       if (!data.data) return
@@ -116,6 +161,8 @@ function createWebUI(peerInfo) {
         return
       }
 
+      if (!isValidBase64(b64)) return
+
       peerInfo.onFileChunkUpload({
         transferId: data.transferId,
         index: data.index,
@@ -126,21 +173,25 @@ function createWebUI(peerInfo) {
     })
 
     socket.on('file-transfer-end', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
       if (!data || typeof data.transferId !== 'string' || !data.transferId) return
       peerInfo.onFileTransferEnd(data)
     })
 
     socket.on('file-transfer-accept', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
       if (!data || typeof data.transferId !== 'string' || !data.transferId) return
       peerInfo.onFileTransferAccept(data)
     })
 
     socket.on('file-transfer-cancel', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
       if (!data || typeof data.transferId !== 'string' || !data.transferId) return
       peerInfo.onFileTransferCancel(data)
     })
 
     socket.on('pin-submit', (data) => {
+      if (!checkWsRateLimit(socket.id)) return
       if (!data || typeof data.peerId !== 'string' || typeof data.pin !== 'string') return
       if (peerInfo.onPINSubmit) {
         peerInfo.onPINSubmit(data)
@@ -151,7 +202,7 @@ function createWebUI(peerInfo) {
   function start(portToUse) {
     return new Promise((resolve, reject) => {
       server.on('error', reject)
-      server.listen(portToUse || 0, () => {
+      server.listen(portToUse || 0, '127.0.0.1', () => {
         port = server.address().port
         resolve(port)
       })
