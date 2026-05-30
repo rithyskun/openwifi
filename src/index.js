@@ -252,18 +252,25 @@ function onMessageReceived(msg, fromPeerId) {
     }
 
     if (msg.type === 'ai-request') {
-      handleAIRequest(msg, fromPeerId)
+      if (msg.to === peerId) {
+        handleAIRequest(msg)
+      }
+      router.handleIncomingMessage(msg, fromPeerId)
       return
     }
 
     if (msg.type === 'ai-response') {
-      webUI.broadcastAIMessage({
-        requestId: msg.requestId,
-        response: msg.response,
-        error: msg.error,
-        from: msg.from,
-        fromName: msg.fromName,
-      })
+      if (msg.to === peerId) {
+        const payload = msg.payload || {}
+        webUI.broadcastAIMessage({
+          requestId: payload.requestId,
+          response: payload.response,
+          error: payload.error,
+          from: msg.from,
+          fromName: msg.fromName,
+        })
+      }
+      router.handleIncomingMessage(msg, fromPeerId)
       return
     }
 
@@ -273,11 +280,12 @@ function onMessageReceived(msg, fromPeerId) {
   }
 }
 
-async function handleAIRequest(msg, fromPeerId) {
-  const requestId = msg.requestId
-  const messages = msg.messages
+async function handleAIRequest(msg) {
+  const payload = msg.payload || {}
+  const requestId = payload.requestId
+  const messages = payload.messages
   if (!requestId || !Array.isArray(messages) || messages.length === 0) {
-    peerManager.sendToPeer(fromPeerId, { type: 'ai-response', requestId, error: 'Invalid request' })
+    router.sendMessage(msg.from, { type: 'ai-response', requestId, error: 'Invalid request' })
     return
   }
   try {
@@ -294,20 +302,14 @@ async function handleAIRequest(msg, fromPeerId) {
     })
     if (!response.ok) {
       const text = await response.text()
-      peerManager.sendToPeer(fromPeerId, { type: 'ai-response', requestId, error: `LM Studio error: ${text}` })
+      router.sendMessage(msg.from, { type: 'ai-response', requestId, error: `LM Studio error: ${text}` })
       return
     }
     const data = await response.json()
     const content = data.choices?.[0]?.message?.content || ''
-    peerManager.sendToPeer(fromPeerId, {
-      type: 'ai-response',
-      requestId,
-      response: content,
-      from: peerId,
-      fromName: peerName,
-    })
+    router.sendMessage(msg.from, { type: 'ai-response', requestId, response: content })
   } catch (err) {
-    peerManager.sendToPeer(fromPeerId, { type: 'ai-response', requestId, error: `LM Studio unreachable: ${err.message}` })
+    router.sendMessage(msg.from, { type: 'ai-response', requestId, error: `LM Studio unreachable: ${err.message}` })
   }
 }
 
