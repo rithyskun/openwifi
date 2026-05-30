@@ -49,9 +49,10 @@ function createPeerManager(peerInfo) {
     }
   }
 
-  function sendToPeer(peerId, message) {
+  function sendToPeer(peerId, message, opts = {}) {
     const peer = peers.get(peerId)
     if (!peer || !peer.socket || peer.socket.destroyed) return false
+    if (!opts.skipAuth && !peer.authenticated) return false
 
     if (peer.sharedKey && peer.handshakeDone) {
       sendRaw(peer.socket, encryptOutgoing(message, peer.sharedKey))
@@ -61,16 +62,28 @@ function createPeerManager(peerInfo) {
     return true
   }
 
-  function broadcastToPeers(message, excludeId) {
+  function broadcastToPeers(message, excludeId, opts = {}) {
     for (const [id, peer] of peers) {
-      if (id !== excludeId && peer.socket && !peer.socket.destroyed) {
-        if (peer.sharedKey && peer.handshakeDone) {
-          sendRaw(peer.socket, encryptOutgoing(message, peer.sharedKey))
-        } else {
-          sendRaw(peer.socket, message)
-        }
+      if (id === excludeId) continue
+      if (!peer.socket || peer.socket.destroyed) continue
+      if (!opts.skipAuth && !peer.authenticated) continue
+
+      if (peer.sharedKey && peer.handshakeDone) {
+        sendRaw(peer.socket, encryptOutgoing(message, peer.sharedKey))
+      } else {
+        sendRaw(peer.socket, message)
       }
     }
+  }
+
+  function markAuthenticated(peerId) {
+    const peer = peers.get(peerId)
+    if (peer) peer.authenticated = true
+  }
+
+  function isAuthenticated(peerId) {
+    const peer = peers.get(peerId)
+    return peer ? peer.authenticated : false
   }
 
   function attachSocketHandlers(socket, isOutgoing) {
@@ -124,6 +137,7 @@ function createPeerManager(peerInfo) {
             sharedKey,
             remotePublicKey,
             handshakeDone: true,
+            authenticated: false,
           })
 
           handshakeDone = true
@@ -221,6 +235,7 @@ function createPeerManager(peerInfo) {
         name: peer.name,
         sharedKey: !!peer.sharedKey,
         handshakeDone: !!peer.handshakeDone,
+        authenticated: !!peer.authenticated,
       })
     }
     return result
@@ -265,6 +280,8 @@ function createPeerManager(peerInfo) {
     getPeerInfo,
     isConnected,
     disconnectPeer,
+    markAuthenticated,
+    isAuthenticated,
     stop,
   }
 }

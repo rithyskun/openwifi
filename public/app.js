@@ -335,12 +335,12 @@ function renderPeerList() {
 
   for (const peer of peers) {
     const li = document.createElement('li')
-    const isAuth = peer.sharedKey && peer.handshakeDone
-    li.innerHTML = `
-      <span class="peer-name">${escapeHtml(peer.name)}</span>
-      <span class="peer-id">${escapeHtml(peer.id)}</span>
-      <span class="peer-status ${isAuth ? 'status-secure' : 'status-pending'}">${isAuth ? 'SECURE' : 'PENDING'}</span>
-    `
+      const isAuth = peer.authenticated && peer.sharedKey && peer.handshakeDone
+      li.innerHTML = `
+        <span class="peer-name">${escapeHtml(peer.name)}</span>
+        <span class="peer-id">${escapeHtml(peer.id)}</span>
+        <span class="peer-status ${isAuth ? 'status-secure' : 'status-pending'}">${isAuth ? 'AUTHENTICATED' : 'PENDING'}</span>
+      `
     li.addEventListener('click', () => {
       targetSelect.value = peer.id
     })

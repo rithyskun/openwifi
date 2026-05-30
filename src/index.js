@@ -185,7 +185,8 @@ function onHandshakeComplete(remoteId, remoteName, remotePublicKey, sharedKey) {
       console.log(`  ${remoteName} public key mismatch! Re-authentication required.`)
     } else {
       console.log(`  ${remoteName} is trusted, skipping PIN auth`)
-      peerManager.sendToPeer(remoteId, { type: '_auth_result', payload: { success: true, skipPIN: true } })
+      peerManager.markAuthenticated(remoteId)
+      peerManager.sendToPeer(remoteId, { type: '_auth_result', payload: { success: true, skipPIN: true } }, { skipAuth: true })
       notifyAuthReady(remoteId, remoteName)
       resetBackoff(remoteId)
       return
@@ -194,7 +195,7 @@ function onHandshakeComplete(remoteId, remoteName, remotePublicKey, sharedKey) {
 
   if (peerId.localeCompare(remoteId) < 0) {
     console.log(`  Requesting PIN auth from ${remoteName}...`)
-    peerManager.sendToPeer(remoteId, { type: '_auth_request', payload: { fromName: peerName } })
+    peerManager.sendToPeer(remoteId, { type: '_auth_request', payload: { fromName: peerName } }, { skipAuth: true })
   }
 }
 
@@ -235,6 +236,11 @@ function onMessageReceived(msg, fromPeerId) {
       return
     }
 
+    if (!peer.authenticated) {
+      console.log(`  Dropping message from unauthenticated peer ${peer.name} (${fromPeerId})`)
+      return
+    }
+
     if (msg.type === 'file-transfer') {
       fileTransfer.handleP2PMessage(msg, fromPeerId)
       return
@@ -272,12 +278,12 @@ function handleIncomingAuthRequest(fromPeerId, fromName) {
   peerManager.sendToPeer(fromPeerId, {
     type: '_auth_challenge',
     payload: { fromName: peerName },
-  })
+  }, { skipAuth: true })
 
   setTimeout(() => {
     if (pendingPINAuths.has(fromPeerId)) {
       pendingPINAuths.delete(fromPeerId)
-      peerManager.sendToPeer(fromPeerId, { type: '_auth_abort', payload: {} })
+      peerManager.sendToPeer(fromPeerId, { type: '_auth_abort', payload: {} }, { skipAuth: true })
       console.log(`  PIN auth timed out for ${fromName}`)
     }
   }, PIN_TIMEOUT).unref()
@@ -300,7 +306,7 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
     peerManager.sendToPeer(fromPeerId, {
       type: '_auth_result',
       payload: { success: false, message: 'No pending auth' },
-    })
+    }, { skipAuth: true })
     return
   }
 
@@ -313,6 +319,7 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
     pendingPINAuths.delete(fromPeerId)
     pinFailures.delete(fromPeerId)
     db.addTrustedPeer(fromPeerId, pending.peerName, pending.remotePublicKey || '')
+    peerManager.markAuthenticated(fromPeerId)
 
     peerManager.sendToPeer(fromPeerId, {
       type: '_auth_result',
@@ -332,7 +339,7 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
       peerManager.sendToPeer(fromPeerId, {
         type: '_auth_result',
         payload: { success: false, message: 'Too many attempts' },
-      })
+      }, { skipAuth: true })
       peerManager.disconnectPeer(fromPeerId)
       webUI.broadcastPeerAuthEvent({
         type: 'auth_failed',
@@ -346,7 +353,7 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
     peerManager.sendToPeer(fromPeerId, {
       type: '_auth_result',
       payload: { success: false, message: 'Wrong PIN' },
-    })
+    }, { skipAuth: true })
     webUI.broadcastPeerAuthEvent({
       type: 'auth_failed',
       peerId: fromPeerId,
@@ -358,6 +365,7 @@ function handleIncomingAuthResponse(msg, fromPeerId) {
 function handleIncomingAuthResult(msg, fromPeerId, fromName) {
   if (msg.payload.success) {
     console.log(`  ${fromName} authenticated us`)
+    peerManager.markAuthenticated(fromPeerId)
     resetBackoff(fromPeerId)
     notifyAuthReady(fromPeerId, fromName)
   } else {
@@ -375,7 +383,7 @@ function handleIncomingAuthResult(msg, fromPeerId, fromName) {
 }
 
 function notifyAuthReady(peerId, peerName) {
-  peerManager.sendToPeer(peerId, { type: '_auth_ready', payload: {} })
+  peerManager.sendToPeer(peerId, { type: '_auth_ready', payload: {} }, { skipAuth: true })
   webUI.broadcastPeers(peerManager.getConnectedPeers())
   webUI.broadcastPeerAuthEvent({
     type: 'authenticated',
@@ -397,7 +405,7 @@ function onPINSubmit(data) {
   peerManager.sendToPeer(peerId, {
     type: '_auth_response',
     payload: { pin },
-  })
+  }, { skipAuth: true })
 }
 
 function onPeerDisconnected(peerId) {
