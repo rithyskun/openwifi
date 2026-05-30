@@ -13,8 +13,8 @@ const selfInfoEl = document.getElementById('self-info')
 const pinModal = document.getElementById('pin-modal')
 const pinModalBody = document.getElementById('pin-modal-body')
 
-const CHUNK_SIZE = 262144
-const PIPELINE_DEPTH = 4
+const CHUNK_SIZE = 1048576
+const PIPELINE_DEPTH = 8
 const activeSends = new Map()
 
 socket.on('self-info', (info) => {
@@ -145,7 +145,10 @@ function completeDownload(event) {
 
   const actions = container.querySelector('.file-actions')
   if (actions) {
-    actions.innerHTML = `<a href="/download/${event.transferId}" class="download-btn" style="text-decoration:none">Save File</a>`
+    const verifiedBadge = event.verified
+      ? '<span class="verified-badge" title="SHA-256 integrity verified">&#10003; Verified</span>'
+      : ''
+    actions.innerHTML = `<a href="/download/${event.transferId}" class="download-btn" style="text-decoration:none">Save File</a>${verifiedBadge}`
   }
 }
 

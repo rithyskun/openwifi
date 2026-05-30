@@ -2,6 +2,7 @@ const EventEmitter = require('events')
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
+const crypto = require('crypto')
 
 const { CHUNK_SIZE, CLEANUP_DELAY, MAX_FILE_NAME_LENGTH, MAX_FILE_SIZE } = require('./config')
 
@@ -54,6 +55,10 @@ class FileTransferManager extends EventEmitter {
     this.sends.set(transferId, {
       transferId, fileName: sanitizeFilename(fileName), fileSize, totalChunks,
       toPeerId, status: 'announcing',
+      hash: crypto.createHash('sha256'),
+      hashNextIndex: 0,
+      hashPending: new Map(),
+      sha256: null,
     })
 
     this.peerManager.sendToPeer(toPeerId, {
@@ -79,7 +84,25 @@ class FileTransferManager extends EventEmitter {
       payload: { action: 'chunk', transferId, index, data },
     })
 
+    this._updateSendHash(send, index, data)
+
     this.emit('send-progress', { transferId, index, total: send.totalChunks })
+  }
+
+  _updateSendHash(send, index, data) {
+    if (!send.hash) return
+    send.hashPending.set(index, data)
+    while (send.hashPending.has(send.hashNextIndex)) {
+      const d = send.hashPending.get(send.hashNextIndex)
+      send.hashPending.delete(send.hashNextIndex)
+      try {
+        send.hash.update(Buffer.from(d, 'base64'))
+      } catch {
+        send.hash = null
+        return
+      }
+      send.hashNextIndex++
+    }
   }
 
   endTransfer(transferId) {
@@ -88,9 +111,13 @@ class FileTransferManager extends EventEmitter {
     if (!send) return
     send.status = 'complete'
 
+    if (send.hash && send.hashNextIndex === send.totalChunks) {
+      send.sha256 = send.hash.digest('hex')
+    }
+
     this.peerManager.sendToPeer(send.toPeerId, {
       type: 'file-transfer',
-      payload: { action: 'done', transferId },
+      payload: { action: 'done', transferId, sha256: send.sha256 },
     })
 
     this.emit('send-status', { transferId, status: 'complete' })
@@ -153,17 +180,23 @@ class FileTransferManager extends EventEmitter {
 
     const safeName = sanitizeFilename(fileName)
     const tempPath = path.join(this.tempDir, transferId)
-    const writeStream = fs.createWriteStream(tempPath, { flags: 'w' })
+    const chunkSize = (typeof msg.payload.chunkSize === 'number' && msg.payload.chunkSize > 0)
+      ? msg.payload.chunkSize
+      : CHUNK_SIZE
 
-    writeStream.on('error', (err) => {
+    let fd
+    try {
+      fd = fs.openSync(tempPath, 'w')
+    } catch (err) {
       this.emit('download-error', { transferId, error: err.message })
-    })
+      return
+    }
 
     this.downloads.set(transferId, {
-      transferId, fileName: safeName, fileSize, totalChunks,
+      transferId, fileName: safeName, fileSize, totalChunks, chunkSize,
       fromPeerId, fromName: msg.fromName || 'Unknown',
       tempPath, receivedChunks: 0, receivedBytes: 0, status: 'announced',
-      writeStream,
+      fd, expectedHash: null, verified: false,
     })
 
     this.emit('download-announce', {
@@ -186,15 +219,18 @@ class FileTransferManager extends EventEmitter {
     if (!isValidTransferId(transferId)) return
     const dl = this.downloads.get(transferId)
     if (!dl || dl.fromPeerId !== fromPeerId) return
+    if (dl.fd === null || dl.fd === undefined) return
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= dl.totalChunks) return
 
     try {
       const buf = Buffer.from(data, 'base64')
-      if (dl.receivedBytes + buf.length > dl.fileSize) {
+      const position = index * dl.chunkSize
+      if (position + buf.length > dl.fileSize) {
         this.emit('download-error', { transferId, error: 'Chunk exceeds announced file size' })
         this._cleanupDownload(transferId)
         return
       }
-      const ok = dl.writeStream.write(buf)
+      fs.writeSync(dl.fd, buf, 0, buf.length, position)
       dl.receivedChunks++
       dl.receivedBytes += buf.length
 
@@ -202,23 +238,61 @@ class FileTransferManager extends EventEmitter {
         transferId, received: dl.receivedChunks, total: dl.totalChunks,
       })
 
-      return ok
+      return true
     } catch (err) {
       this.emit('download-error', { transferId, error: err.message })
     }
   }
 
   _handleDone(msg, fromPeerId) {
-    const { transferId } = msg.payload
+    const { transferId, sha256 } = msg.payload
     if (!isValidTransferId(transferId)) return
     const dl = this.downloads.get(transferId)
     if (!dl || dl.fromPeerId !== fromPeerId) return
 
+    dl.expectedHash = typeof sha256 === 'string' && sha256 ? sha256 : null
+
+    if (dl.fd !== null && dl.fd !== undefined) {
+      try { fs.closeSync(dl.fd) } catch {}
+      dl.fd = null
+    }
+
+    if (!dl.expectedHash) {
+      this._finishDownload(dl, false)
+      return
+    }
+
+    dl.status = 'verifying'
+    const hash = crypto.createHash('sha256')
+    const rs = fs.createReadStream(dl.tempPath)
+    rs.on('error', (err) => {
+      dl.status = 'error'
+      this.emit('download-error', { transferId, error: err.message })
+      this._cleanupDownload(transferId)
+    })
+    rs.on('data', (d) => hash.update(d))
+    rs.on('end', () => {
+      if (!this.downloads.has(transferId)) return
+      const digest = hash.digest('hex')
+      if (digest !== dl.expectedHash) {
+        dl.status = 'error'
+        this._cleanupDownload(transferId)
+        this.emit('download-error', {
+          transferId, error: 'Integrity check failed: file hash does not match sender',
+        })
+        return
+      }
+      this._finishDownload(dl, true)
+    })
+  }
+
+  _finishDownload(dl, verified) {
+    const transferId = dl.transferId
     dl.status = 'complete'
-    dl.writeStream.end()
+    dl.verified = verified
 
     this.emit('download-complete', {
-      transferId, fileName: dl.fileName, fileSize: dl.fileSize,
+      transferId, fileName: dl.fileName, fileSize: dl.fileSize, verified,
     })
 
     setTimeout(() => this._cleanupDownload(transferId), CLEANUP_DELAY).unref()
@@ -236,8 +310,9 @@ class FileTransferManager extends EventEmitter {
     const dl = this.downloads.get(transferId)
     if (!dl) return
     try {
-      if (dl.writeStream && !dl.writeStream.destroyed) {
-        dl.writeStream.destroy()
+      if (dl.fd !== null && dl.fd !== undefined) {
+        try { fs.closeSync(dl.fd) } catch {}
+        dl.fd = null
       }
       if (fs.existsSync(dl.tempPath)) fs.unlinkSync(dl.tempPath)
     } catch {}

@@ -3,14 +3,8 @@ const assert = require('node:assert')
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
+const crypto = require('crypto')
 const { FileTransferManager, CHUNK_SIZE } = require('../src/file-transfer')
-
-function finishStream(ws) {
-  return new Promise((resolve) => {
-    if (ws.writableFinished) return resolve()
-    ws.once('finish', resolve)
-  })
-}
 
 function createMockPeerManager() {
   const sent = []
@@ -157,8 +151,10 @@ describe('FileTransferManager', () => {
     const dl = ft.downloads.get('t-chunk-test')
     assert.strictEqual(dl.receivedChunks, 1)
 
-    dl.writeStream.end()
-    await finishStream(dl.writeStream)
+    ft.handleP2PMessage(
+      { payload: { action: 'done', transferId: 't-chunk-test' } },
+      'peer1'
+    )
 
     assert.ok(fs.existsSync(dl.tempPath))
     const content = fs.readFileSync(dl.tempPath, 'utf-8')
@@ -250,8 +246,6 @@ describe('FileTransferManager', () => {
     assert.strictEqual(dl.status, 'complete')
     assert.strictEqual(dl.receivedChunks, 1)
 
-    await finishStream(dl.writeStream)
-
     const filePath = ft2.getDownloadPath('t-cycle')
     assert.ok(fs.existsSync(filePath))
     assert.strictEqual(fs.readFileSync(filePath, 'utf-8'), 'full cycle test data')
@@ -284,8 +278,11 @@ describe('FileTransferManager', () => {
     try { fs.rmSync(ft3.tempDir, { recursive: true, force: true }) } catch {}
   })
 
-  it('handles multiple chunks in sequence', async () => {
+  it('handles multiple chunks in sequence', () => {
     const ft4 = new FileTransferManager(createMockPeerManager())
+    const chunks = ['chunk0 data ', 'chunk1 data ', 'chunk2 data ', 'chunk3 data']
+    const chunkSize = chunks[0].length
+    const fileSize = chunks.reduce((n, c) => n + c.length, 0)
     ft4.handleP2PMessage(
       {
         from: 'charlie',
@@ -294,9 +291,9 @@ describe('FileTransferManager', () => {
           action: 'announce',
           transferId: 't-multi',
           fileName: 'multi.bin',
-          fileSize: CHUNK_SIZE * 3 + 100,
+          fileSize,
           totalChunks: 4,
-          chunkSize: CHUNK_SIZE,
+          chunkSize,
         },
       },
       'charlie'
@@ -305,7 +302,6 @@ describe('FileTransferManager', () => {
     let progressCount = 0
     ft4.on('download-progress', () => progressCount++)
 
-    const chunks = ['chunk0 data ', 'chunk1 data ', 'chunk2 data ', 'chunk3 data']
     for (let i = 0; i < 4; i++) {
       ft4.handleP2PMessage(
         {
@@ -330,11 +326,177 @@ describe('FileTransferManager', () => {
     assert.strictEqual(dl.receivedChunks, 4)
     assert.strictEqual(dl.status, 'complete')
 
-    await finishStream(dl.writeStream)
-
     assert.strictEqual(fs.readFileSync(dl.tempPath, 'utf-8'), chunks.join(''))
 
     try { fs.rmSync(ft4.tempDir, { recursive: true, force: true }) } catch {}
+  })
+
+  it('writes out-of-order chunks to correct offsets', () => {
+    const ft = new FileTransferManager(createMockPeerManager())
+    const parts = ['AAAAAAAAAA', 'BBBBBBBBBB', 'CCCCC']
+    const chunkSize = 10
+    const fileSize = parts.reduce((n, p) => n + p.length, 0)
+    ft.handleP2PMessage(
+      {
+        from: 'dan',
+        fromName: 'Dan',
+        payload: {
+          action: 'announce',
+          transferId: 't-ooo',
+          fileName: 'ooo.bin',
+          fileSize,
+          totalChunks: 3,
+          chunkSize,
+        },
+      },
+      'dan'
+    )
+
+    for (const i of [2, 0, 1]) {
+      ft.handleP2PMessage(
+        {
+          payload: {
+            action: 'chunk',
+            transferId: 't-ooo',
+            index: i,
+            data: Buffer.from(parts[i]).toString('base64'),
+          },
+        },
+        'dan'
+      )
+    }
+
+    ft.handleP2PMessage(
+      { payload: { action: 'done', transferId: 't-ooo' } },
+      'dan'
+    )
+
+    const dl = ft.getDownloadInfo('t-ooo')
+    assert.strictEqual(fs.readFileSync(dl.tempPath, 'utf-8'), parts.join(''))
+
+    try { fs.rmSync(ft.tempDir, { recursive: true, force: true }) } catch {}
+  })
+
+  it('verifies file integrity when sender provides matching sha256', () => {
+    const ft = new FileTransferManager(createMockPeerManager())
+    const data = Buffer.from('integrity verified payload')
+    const sha256 = crypto.createHash('sha256').update(data).digest('hex')
+    ft.handleP2PMessage(
+      {
+        from: 'erin',
+        fromName: 'Erin',
+        payload: {
+          action: 'announce',
+          transferId: 't-verify-ok',
+          fileName: 'secure.bin',
+          fileSize: data.length,
+          totalChunks: 1,
+          chunkSize: data.length,
+        },
+      },
+      'erin'
+    )
+    ft.handleP2PMessage(
+      {
+        payload: {
+          action: 'chunk',
+          transferId: 't-verify-ok',
+          index: 0,
+          data: data.toString('base64'),
+        },
+      },
+      'erin'
+    )
+
+    return new Promise((resolve) => {
+      ft.on('download-complete', (info) => {
+        if (info.transferId !== 't-verify-ok') return
+        assert.strictEqual(info.verified, true)
+        assert.strictEqual(ft.getDownloadInfo('t-verify-ok').status, 'complete')
+        try { fs.rmSync(ft.tempDir, { recursive: true, force: true }) } catch {}
+        resolve()
+      })
+      ft.handleP2PMessage(
+        { payload: { action: 'done', transferId: 't-verify-ok', sha256 } },
+        'erin'
+      )
+    })
+  })
+
+  it('rejects download when sha256 does not match (tamper/corruption)', () => {
+    const ft = new FileTransferManager(createMockPeerManager())
+    const data = Buffer.from('original payload')
+    const wrongHash = crypto.createHash('sha256').update('something else').digest('hex')
+    ft.handleP2PMessage(
+      {
+        from: 'frank',
+        fromName: 'Frank',
+        payload: {
+          action: 'announce',
+          transferId: 't-verify-bad',
+          fileName: 'secure.bin',
+          fileSize: data.length,
+          totalChunks: 1,
+          chunkSize: data.length,
+        },
+      },
+      'frank'
+    )
+    ft.handleP2PMessage(
+      {
+        payload: {
+          action: 'chunk',
+          transferId: 't-verify-bad',
+          index: 0,
+          data: data.toString('base64'),
+        },
+      },
+      'frank'
+    )
+
+    return new Promise((resolve) => {
+      ft.on('download-error', (info) => {
+        if (info.transferId !== 't-verify-bad') return
+        assert.ok(info.error.includes('Integrity check failed'))
+        assert.strictEqual(ft.downloads.has('t-verify-bad'), false)
+        try { fs.rmSync(ft.tempDir, { recursive: true, force: true }) } catch {}
+        resolve()
+      })
+      ft.handleP2PMessage(
+        { payload: { action: 'done', transferId: 't-verify-bad', sha256: wrongHash } },
+        'frank'
+      )
+    })
+  })
+
+  it('computes end-to-end sha256 across send pipeline (out-of-order reads)', () => {
+    const mockPM = createMockPeerManager()
+    const ft = new FileTransferManager(mockPM)
+    const fileBuf = crypto.randomBytes(CHUNK_SIZE + 512)
+    const expected = crypto.createHash('sha256').update(fileBuf).digest('hex')
+    const totalChunks = Math.ceil(fileBuf.length / CHUNK_SIZE)
+
+    ft.startTransfer('t-e2e', 'rand.bin', fileBuf.length, 'peer2')
+    ft.handleP2PMessage(
+      { payload: { action: 'accept', transferId: 't-e2e' } },
+      'peer2'
+    )
+
+    const order = []
+    for (let i = 0; i < totalChunks; i++) order.push(i)
+    order.reverse()
+    for (const i of order) {
+      const start = i * CHUNK_SIZE
+      const buf = fileBuf.subarray(start, Math.min(start + CHUNK_SIZE, fileBuf.length))
+      ft.sendChunk('t-e2e', i, buf.toString('base64'))
+    }
+    ft.endTransfer('t-e2e')
+
+    const lastCall = mockPM.sent[mockPM.sent.length - 1].msg
+    assert.strictEqual(lastCall.payload.action, 'done')
+    assert.strictEqual(lastCall.payload.sha256, expected)
+
+    try { fs.rmSync(ft.tempDir, { recursive: true, force: true }) } catch {}
   })
 
   it('sendChunk sends chunk to peer and emits progress', () => {
